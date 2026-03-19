@@ -48,3 +48,17 @@ def test_dense_lejepa_backward_flows_through_backbone_and_projector() -> None:
     projector_grad = model.projector.proj[0].weight.grad
     assert backbone_grad is not None
     assert projector_grad is not None
+
+
+def test_dense_lejepa_sequential_view_forward_runs() -> None:
+    """Sequential forward saves activation memory; grads should still flow."""
+    torch.manual_seed(4)
+    cfg = _make_config()
+    cfg.lejepa.sequential_view_forward = True
+    model = DenseLeJEPAModel(cfg)
+    x = torch.randn(2, 1, 32, 32)
+    out = model(x)
+    assert out["latents"].shape == (2, 3, 10, 32, 32)
+    assert torch.isfinite(out["loss"])
+    out["loss"].backward()
+    assert model.backbone.stem.proj.conv.weight.grad is not None

@@ -107,6 +107,8 @@ def _worker(
     config.model.hea.per_scale_window_sizes = [7, 7, 7]
 
     config.model.lejepa.num_views = 4
+    # Lower peak VRAM vs fusing all views through the backbone in one batch.
+    config.model.lejepa.sequential_view_forward = True
     config.model.lejepa.lambda_sigreg = 0.05
     config.model.lejepa.sigreg.enabled = True
     config.model.lejepa.sigreg.num_slices = 64
@@ -176,7 +178,7 @@ def run_spawn_training(
     project_root: str | Path | None = None,
     *,
     epochs: int = 50,
-    batch_size: int = 16,
+    batch_size: int = 8,
     master_addr: str = "127.0.0.1",
     master_port: str | None = None,
 ) -> dict[str, Any] | None:
@@ -227,7 +229,7 @@ def main() -> None:
         help="Repo root (default: parent of examples/)",
     )
     parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--master-addr", type=str, default="127.0.0.1")
     parser.add_argument("--master-port", type=str, default=None)
     args = parser.parse_args()

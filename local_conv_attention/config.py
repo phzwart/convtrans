@@ -154,6 +154,10 @@ class DenseViewConfig:
 class DenseLeJEPAObjectiveConfig:
     num_views: int = 4
     lambda_sigreg: float = 0.02
+    #: Run backbone+projector one view at a time (lower peak VRAM; slower). With
+    #: BatchNorm, effective norm batch differs from a fused forward — consider GroupNorm
+    #: if you need identical statistics to the fused path.
+    sequential_view_forward: bool = False
     invariance: DenseInvarianceConfig = field(default_factory=DenseInvarianceConfig)
     sigreg: DenseSIGRegConfig = field(default_factory=DenseSIGRegConfig)
     views: DenseViewConfig = field(default_factory=DenseViewConfig)

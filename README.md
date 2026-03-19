@@ -94,6 +94,10 @@ pip install -e .
 
 `torch` is intentionally not forced as a hard packaging dependency so you can choose the right PyTorch build for your machine first, including CPU, CUDA, or MPS-enabled installs.
 
+### Dense LeJEPA / VRAM
+
+Dense LeJEPA runs the backbone on **`batch_size × num_views`** images per step unless you enable **`lejepa.sequential_view_forward`** (runs one view at a time; lower peak memory, slightly slower). If you hit CUDA OOM, try in order: **lower `batch_size`**, enable **`sequential_view_forward`**, reduce **`num_views`** (minimum 2), shrink **`base_channels` / `channel_multipliers`**, or lower **`sigreg.num_slices`**. PyTorch also suggests `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` when fragmentation is an issue.
+
 ## Quick usage
 
 ```python

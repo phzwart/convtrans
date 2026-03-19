@@ -144,16 +144,25 @@ class DenseLeJEPAModel(nn.Module):
             valid_mask = generated_valid_mask
 
         batch, num_views, channels, height, width = views.shape
-        flat_views = views.reshape(batch * num_views, channels, height, width)
-        backbone_features = self.backbone(flat_views)
-        projected = self.projector(backbone_features)
-        latents = projected.reshape(
-            batch,
-            num_views,
-            projected.size(1),
-            projected.size(2),
-            projected.size(3),
-        )
+        if self.config.lejepa.sequential_view_forward:
+            # Peak memory ~ one view through backbone instead of (batch * num_views).
+            parts: list[Tensor] = []
+            for view_index in range(num_views):
+                chunk = views[:, view_index].contiguous()
+                projected = self.projector(self.backbone(chunk))
+                parts.append(projected.unsqueeze(1))
+            latents = torch.cat(parts, dim=1)
+        else:
+            flat_views = views.reshape(batch * num_views, channels, height, width)
+            backbone_features = self.backbone(flat_views)
+            projected = self.projector(backbone_features)
+            latents = projected.reshape(
+                batch,
+                num_views,
+                projected.size(1),
+                projected.size(2),
+                projected.size(3),
+            )
         latent_valid_mask = self._downsample_valid_mask(valid_mask, latents.shape[-2:])
         loss_valid_mask = latent_valid_mask if self.config.lejepa.invariance.loss_on_valid_only else None
 
