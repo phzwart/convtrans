@@ -1,0 +1,13 @@
+implementation,batch,dim,height,width,heads,window_size,forward_seconds,backward_seconds_estimate,forward_backward_seconds,backward_over_forward_ratio,forward_share_of_train_step,peak_memory_bytes,device,dtype,compiled,compile_mode,channels_last,error
+optimized_block,1,32,16,16,1,3,0.7083514170080889,0.006603652669582516,0.006513611335928242,0.009322565764708714,108.74941418455745,,cpu,torch.float32,True,reduce-overhead,True,
+shift_block_reference,1,32,16,16,1,3,0.0017570829950273037,0.0031661666677488634,0.0033373473367343345,1.8019448578748913,0.5264908976320837,,cpu,torch.float32,True,reduce-overhead,True,
+flattened_reference_block,1,32,16,16,1,3,0.024559374985983595,0.026271819331062336,0.02498159700189717,1.0697267070540704,0.9830986779635621,,cpu,torch.float32,True,reduce-overhead,True,
+optimized_block,2,64,16,16,4,5,0.8751572920009494,0.013174208337053036,0.012345652668348825,0.015053532042144883,70.88789191717943,,cpu,torch.float32,True,reduce-overhead,True,
+shift_block_reference,2,64,16,16,4,5,0.0024525420158170164,0.013477471996642029,0.013170110993087292,5.495307281067017,0.18622029966978282,,cpu,torch.float32,True,reduce-overhead,True,
+flattened_reference_block,2,64,16,16,4,5,0.059501417010324076,0.05698831933356511,0.056739694671705365,0.9577640701174743,1.0486735495246842,,cpu,torch.float32,True,reduce-overhead,True,
+optimized_block,1,64,32,32,4,3,0.0025937079917639494,0.013668110991905754,0.01334630533043916,5.269718501584381,0.1943390269851262,,cpu,torch.float32,True,reduce-overhead,True,
+shift_block_reference,1,64,32,32,4,3,0.0026526250003371388,0.009363666661859801,0.009234874994338801,3.529962456310151,0.2872399466114334,,cpu,torch.float32,True,reduce-overhead,True,
+flattened_reference_block,1,64,32,32,4,3,,,,,,,cpu,torch.float32,True,reduce-overhead,True,RecursionError: maximum recursion depth exceeded Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to 
+optimized_block,1,128,32,32,8,5,0.01779629199882038,0.032829499997509025,0.03266058333489733,1.844738218483104,0.5448859200198459,,cpu,torch.float32,True,reduce-overhead,True,
+shift_block_reference,1,128,32,32,8,5,0.004649542010156438,0.019085194333456457,0.019191874996370945,4.104747153970616,0.2422661678984276,,cpu,torch.float32,True,reduce-overhead,True,
+flattened_reference_block,1,128,32,32,8,5,,,,,,,cpu,torch.float32,True,reduce-overhead,True,RecursionError: maximum recursion depth exceeded Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to 

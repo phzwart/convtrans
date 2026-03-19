@@ -1,0 +1,43 @@
+model:
+  name: hea_unet
+  in_channels: 1
+  num_classes: 2
+  base_channels: 16
+  channel_multipliers: [1, 2, 4, 8]
+  encoder_depths: [1, 1, 1, 1]
+  decoder_depths: [1, 1, 1]
+  norm: batchnorm
+  act: gelu
+  use_raw_skips: false
+  bottleneck_depth: 1
+  bottleneck_window_size: 3
+  bottleneck_dilation: 1
+
+  attention:
+    operator_backend: optimized
+    fusion_mode: per_scale
+    elevator_mode: direct
+    heads: 2
+    head_dim: 8
+    out_bias: true
+    qkv_bias: true
+
+  semantic_memory:
+    enabled_scales: [1, 2, 3]
+    block_depths: [1, 1, 1]
+    window_sizes: [3, 3, 3]
+    dilations: [1, 1, 1]
+    use_local_transformer_block: true
+
+  hea:
+    enabled_decoder_stages: [0]
+    query_source: decoder
+    key_value_source: semantic_memory
+    per_scale_window_sizes: [3, 3, 3]
+    per_scale_dilations: [1, 1, 1]
+    fusion: gated_residual
+    project_context: true
+    joint_scale_projection: true
+
+training:
+  image_size: 128
