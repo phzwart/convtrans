@@ -20,7 +20,8 @@ class HEABackbone(nn.Module):
         super().__init__()
         config.validate()
         self.config = config
-        self.latent_source = config.latent.source
+        # Primary hook for ``forward()`` / ``forward_features``[\"latent_feature\"]; multi-hook LeJEPA uses ``resolve_latent_tensor``.
+        self.latent_source = config.latent.resolved_sources()[0]
 
         channels = [config.base_channels * mult for mult in config.channel_multipliers]
         self.channels = channels
@@ -192,14 +193,14 @@ class HEABackbone(nn.Module):
             )
         return enriched
 
-    def _resolve_latent_feature(
+    def resolve_latent_tensor(
         self,
+        source: str,
         *,
         top_feature: Tensor,
         encoder_features: Sequence[Tensor],
         decoder_features: dict[int, Tensor],
     ) -> Tensor:
-        source = self.latent_source
         if source == "top":
             return top_feature
         if source == "bottleneck":
@@ -211,6 +212,20 @@ class HEABackbone(nn.Module):
             scale = int(source.split("_", maxsplit=1)[1])
             return decoder_features[scale]
         raise ValueError(f"Unsupported latent source {source!r}.")
+
+    def _resolve_latent_feature(
+        self,
+        *,
+        top_feature: Tensor,
+        encoder_features: Sequence[Tensor],
+        decoder_features: dict[int, Tensor],
+    ) -> Tensor:
+        return self.resolve_latent_tensor(
+            self.latent_source,
+            top_feature=top_feature,
+            encoder_features=encoder_features,
+            decoder_features=decoder_features,
+        )
 
     def encode_features(self, x: Tensor) -> list[Tensor]:
         x = self.stem(x)

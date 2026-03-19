@@ -4,7 +4,7 @@ This module learns dense latent fields from multiple aligned views of the same
 image. It is symmetric and teacher-free: there is no EMA target network, no
 predictor head, and no stop-gradient branch. Training minimizes a dense
 invariance loss across aligned views plus SIGReg over the resulting latent
-vectors.
+vectors. Multiple backbone hooks (multi-scale) can be trained jointly.
 """
 
 from __future__ import annotations
@@ -21,6 +21,22 @@ from .encoder import make_activation
 from .losses_ssl import dense_invariance_loss
 from .sigreg import SIGRegLoss
 from .views import DenseAlignedViewGenerator
+
+
+def _latent_source_module_key(name: str) -> str:
+    return name.replace(".", "_dot_")
+
+
+def _in_channels_for_latent_source(channels: list[int], source: str) -> int:
+    if source == "top":
+        return channels[0]
+    if source == "bottleneck":
+        return channels[-1]
+    if source.startswith("encoder_"):
+        return channels[int(source.split("_", maxsplit=1)[1])]
+    if source.startswith("decoder_"):
+        return channels[int(source.split("_", maxsplit=1)[1])]
+    raise ValueError(f"Unsupported latent source {source!r}.")
 
 
 class DenseLatentProjector2d(nn.Module):
@@ -63,31 +79,26 @@ class DenseLeJEPAModel(nn.Module):
         self.config = config
         self.backbone = HEABackbone(config)
         self.view_generator = DenseAlignedViewGenerator(config.lejepa)
-        latent_in_channels = self._latent_in_channels()
-        self.projector = DenseLatentProjector2d(
-            latent_in_channels,
-            config.latent.latent_dim,
-            depth=config.latent.projector_depth,
-            activation=config.act,
-            normalize_latents=config.latent.normalize_latents,
+        self._latent_sources = config.latent.resolved_sources()
+        self.projectors = nn.ModuleDict(
+            {
+                _latent_source_module_key(s): DenseLatentProjector2d(
+                    _in_channels_for_latent_source(self.backbone.channels, s),
+                    config.latent.latent_dim,
+                    depth=config.latent.projector_depth,
+                    activation=config.act,
+                    normalize_latents=config.latent.normalize_latents,
+                )
+                for s in self._latent_sources
+            }
         )
+        # First hook’s projector (tests / demos that touch ``model.projector``).
+        self.projector = self.projectors[_latent_source_module_key(self._latent_sources[0])]
         self.sigreg = SIGRegLoss(
             num_slices=config.lejepa.sigreg.num_slices,
             num_knots=config.lejepa.sigreg.num_knots,
             t_max=config.lejepa.sigreg.t_max,
         )
-
-    def _latent_in_channels(self) -> int:
-        source = self.config.latent.source
-        if source == "top":
-            return self.backbone.channels[0]
-        if source == "bottleneck":
-            return self.backbone.channels[-1]
-        if source.startswith("encoder_"):
-            return self.backbone.channels[int(source.split("_", maxsplit=1)[1])]
-        if source.startswith("decoder_"):
-            return self.backbone.channels[int(source.split("_", maxsplit=1)[1])]
-        raise ValueError(f"Unsupported latent source {source!r}.")
 
     @staticmethod
     def _downsample_valid_mask(valid_mask: Tensor | None, shape: tuple[int, int]) -> Tensor | None:
@@ -133,6 +144,29 @@ class DenseLeJEPAModel(nn.Module):
             return x, None
         return self.view_generator(x)
 
+    def _latents_from_feature_pack(
+        self,
+        pack: dict[str, Any],
+        *,
+        batch: int,
+        num_views: int,
+    ) -> dict[str, Tensor]:
+        top = pack["top_feature"]
+        encoder_features = pack["encoder_features"]
+        decoder_features = pack["decoder_features"]
+        latents_by_source: dict[str, Tensor] = {}
+        for source in self._latent_sources:
+            feat = self.backbone.resolve_latent_tensor(
+                source,
+                top_feature=top,
+                encoder_features=encoder_features,
+                decoder_features=decoder_features,
+            )
+            proj = self.projectors[_latent_source_module_key(source)](feat)
+            _, dim, h, w = proj.shape
+            latents_by_source[source] = proj.view(batch, num_views, dim, h, w)
+        return latents_by_source
+
     def forward(
         self,
         x: Tensor,
@@ -145,33 +179,44 @@ class DenseLeJEPAModel(nn.Module):
 
         batch, num_views, channels, height, width = views.shape
         if self.config.lejepa.sequential_view_forward:
-            # Peak memory ~ one view through backbone instead of (batch * num_views).
-            parts: list[Tensor] = []
+            accum: dict[str, list[Tensor]] = {s: [] for s in self._latent_sources}
             for view_index in range(num_views):
                 chunk = views[:, view_index].contiguous()
-                projected = self.projector(self.backbone(chunk))
-                parts.append(projected.unsqueeze(1))
-            latents = torch.cat(parts, dim=1)
+                pack = self.backbone.forward_features(chunk)
+                partial = self._latents_from_feature_pack(pack, batch=batch, num_views=1)
+                for s in self._latent_sources:
+                    accum[s].append(partial[s])
+            latents_by_source = {s: torch.cat(accum[s], dim=1) for s in self._latent_sources}
         else:
             flat_views = views.reshape(batch * num_views, channels, height, width)
-            backbone_features = self.backbone(flat_views)
-            projected = self.projector(backbone_features)
-            latents = projected.reshape(
-                batch,
-                num_views,
-                projected.size(1),
-                projected.size(2),
-                projected.size(3),
+            pack = self.backbone.forward_features(flat_views)
+            latents_by_source = self._latents_from_feature_pack(
+                pack,
+                batch=batch,
+                num_views=num_views,
             )
-        latent_valid_mask = self._downsample_valid_mask(valid_mask, latents.shape[-2:])
-        loss_valid_mask = latent_valid_mask if self.config.lejepa.invariance.loss_on_valid_only else None
 
-        inv_loss = dense_invariance_loss(latents, valid_mask=loss_valid_mask)
-        sigreg_loss = self._sigreg_loss(latents, loss_valid_mask)
+        primary = self._latent_sources[0]
+        latents = latents_by_source[primary]
+        latent_valid_mask = self._downsample_valid_mask(valid_mask, latents.shape[-2:])
+
+        inv_total = latents.new_zeros(())
+        sig_total = latents.new_zeros(())
+        n_hooks = len(self._latent_sources)
+        for source in self._latent_sources:
+            lat = latents_by_source[source]
+            mask_s = self._downsample_valid_mask(valid_mask, lat.shape[-2:])
+            loss_valid_mask = mask_s if self.config.lejepa.invariance.loss_on_valid_only else None
+            inv_total = inv_total + dense_invariance_loss(lat, valid_mask=loss_valid_mask)
+            sig_total = sig_total + self._sigreg_loss(lat, loss_valid_mask)
+
+        inv_loss = inv_total / n_hooks
+        sigreg_loss = sig_total / n_hooks
         lambda_sigreg = self.config.lejepa.lambda_sigreg
         loss = (1.0 - lambda_sigreg) * inv_loss + lambda_sigreg * sigreg_loss
         return {
             "latents": latents,
+            "latents_by_source": latents_by_source,
             "inv_loss": inv_loss,
             "sigreg_loss": sigreg_loss,
             "loss": loss,

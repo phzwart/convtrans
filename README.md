@@ -96,7 +96,7 @@ pip install -e .
 
 ### Dense LeJEPA / VRAM
 
-Dense LeJEPA runs the backbone on **`batch_size × num_views`** images per step unless you enable **`lejepa.sequential_view_forward`** (runs one view at a time; lower peak memory, slightly slower). If you hit CUDA OOM, try in order: **lower `batch_size`**, enable **`sequential_view_forward`**, reduce **`num_views`** (minimum 2), shrink **`base_channels` / `channel_multipliers`**, or lower **`sigreg.num_slices`**. PyTorch also suggests `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` when fragmentation is an issue.
+Dense LeJEPA runs the backbone on **`batch_size × num_views`** images per step unless you enable **`lejepa.sequential_view_forward`** (runs one view at a time; lower peak memory, slightly slower). Set **`latent.sources`** to a list of hooks (`encoder_<k>`, `bottleneck`, `decoder_<k>`, `top`) to train **multiple** dense latent heads at once (equal average of invariance + SIGReg per hook); use **`default_all_latent_hooks(num_scales)`** for every pyramid location. Single-hook **`latent.source`** still works when **`latent.sources`** is unset. If you hit CUDA OOM, try in order: **lower `batch_size`**, enable **`sequential_view_forward`**, reduce **`num_views`** (minimum 2), use fewer **`latent.sources`**, shrink **`base_channels` / `channel_multipliers`**, or lower **`sigreg.num_slices`**. PyTorch also suggests `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` when fragmentation is an issue.
 
 ## Quick usage
 

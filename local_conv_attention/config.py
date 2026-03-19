@@ -84,18 +84,90 @@ class TrunkConfig:
     operator_backend: Literal["optimized", "shift"] | None = None
 
 
+def _validate_latent_hook_name(name: str) -> None:
+    if name in ("top", "bottleneck"):
+        return
+    if name.startswith("encoder_"):
+        int(name.split("_", maxsplit=1)[1])
+        return
+    if name.startswith("decoder_"):
+        int(name.split("_", maxsplit=1)[1])
+        return
+    raise ValueError(
+        f"Unsupported latent hook {name!r}; use top, bottleneck, encoder_<k>, or decoder_<k>."
+    )
+
+
+def default_all_latent_hooks(num_scales: int) -> list[str]:
+    """All standard hooks for a pyramid with ``num_scales`` encoder stages.
+
+    Order: all ``encoder_*``, ``bottleneck``, all ``decoder_*``, ``top``.
+    """
+    if num_scales < 1:
+        raise ValueError("num_scales must be positive.")
+    hooks: list[str] = [f"encoder_{k}" for k in range(num_scales)]
+    hooks.append("bottleneck")
+    hooks.extend(f"decoder_{k}" for k in range(max(0, num_scales - 1)))
+    hooks.append("top")
+    return hooks
+
+
+def _validate_latent_hooks_for_pyramid(hooks: list[str], num_scales: int) -> None:
+    """``num_scales`` = len(encoder stages); decoder stages are ``0 .. num_scales-2``."""
+    if num_scales < 1:
+        raise ValueError("num_scales must be positive.")
+    max_encoder = num_scales - 1
+    max_decoder = num_scales - 2
+    for name in hooks:
+        _validate_latent_hook_name(name)
+        if name.startswith("encoder_"):
+            k = int(name.split("_", maxsplit=1)[1])
+            if k < 0 or k > max_encoder:
+                raise ValueError(
+                    f"latent hook {name!r} invalid for {num_scales} encoder stages (valid 0..{max_encoder})."
+                )
+        if name.startswith("decoder_"):
+            if max_decoder < 0:
+                raise ValueError("No decoder stages for this pyramid depth.")
+            k = int(name.split("_", maxsplit=1)[1])
+            if k < 0 or k > max_decoder:
+                raise ValueError(
+                    f"latent hook {name!r} invalid for decoder (valid 0..{max_decoder})."
+                )
+
+
 @dataclass
 class DenseLatentConfig:
+    """Dense LeJEPA hooks: one or more backbone tensors to project and train."""
+
     source: str = "top"
+    sources: list[str] | None = None
     latent_dim: int = 128
     projector_depth: int = 1
     normalize_latents: bool = False
+
+    def resolved_sources(self) -> list[str]:
+        if self.sources is not None and len(self.sources) > 0:
+            raw = list(self.sources)
+        else:
+            raw = [self.source]
+        out: list[str] = []
+        seen: set[str] = set()
+        for name in raw:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+        return out
 
     def validate(self) -> None:
         if self.latent_dim <= 0:
             raise ValueError("latent.latent_dim must be positive.")
         if self.projector_depth < 1:
             raise ValueError("latent.projector_depth must be at least 1.")
+        if not self.resolved_sources():
+            raise ValueError("latent.sources (or latent.source) must list at least one hook.")
+        for name in self.resolved_sources():
+            _validate_latent_hook_name(name)
 
 
 @dataclass
@@ -405,6 +477,10 @@ class HEAUNetModelConfig:
             self.instance_head.validate(self.num_classes)
         if self.is_dense_ssl_model():
             self.latent.validate()
+            _validate_latent_hooks_for_pyramid(
+                self.latent.resolved_sources(),
+                len(self.channel_multipliers),
+            )
             self.lejepa.validate()
 
         trunk_name = self.trunk_name()

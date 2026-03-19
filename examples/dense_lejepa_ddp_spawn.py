@@ -52,7 +52,12 @@ def _worker(
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-    from local_conv_attention import DenseLeJEPAModel, DiscSquareDataset, load_experiment_config
+    from local_conv_attention import (
+        DenseLeJEPAModel,
+        DiscSquareDataset,
+        default_all_latent_hooks,
+        load_experiment_config,
+    )
 
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["MASTER_PORT"] = master_port
@@ -97,7 +102,7 @@ def _worker(
     config.model.attention.head_dim = 16
     config.model.attention.operator_backend = "optimized"
 
-    config.model.latent.source = "encoder_0"
+    config.model.latent.sources = default_all_latent_hooks(len(config.model.channel_multipliers))
     config.model.latent.latent_dim = 32
     config.model.latent.projector_depth = 1
     config.model.latent.normalize_latents = False
@@ -126,8 +131,8 @@ def _worker(
     config.validate()
 
     model = DenseLeJEPAModel(config.model).to(device)
-    # latent.source=encoder_0: loss does not backprop through decoder/bottleneck, so many
-    # backbone parameters are forward-only; DDP requires find_unused_parameters=True.
+    # With full ``latent.sources`` all backbone submodules get loss signal; keep True if you
+    # use a subset of hooks (e.g. only encoder_0).
     model = DDP(
         model,
         device_ids=[rank],

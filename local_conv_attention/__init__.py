@@ -24,6 +24,7 @@ from .config import (
     InstanceHeadConfig,
     InstancePostprocessConfig,
     InstanceTargetConfig,
+    default_all_latent_hooks,
     experiment_config_from_dict,
     load_experiment_config,
 )
@@ -110,6 +111,7 @@ __all__ = [
     "build_model_from_yaml",
     "build_offset_target",
     "decode_instances",
+    "default_all_latent_hooks",
     "experiment_config_from_dict",
     "flattened_local_attention_from_qkv",
     "flattened_local_attention_mask",
