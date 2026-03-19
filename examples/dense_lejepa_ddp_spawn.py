@@ -126,11 +126,13 @@ def _worker(
     config.validate()
 
     model = DenseLeJEPAModel(config.model).to(device)
+    # latent.source=encoder_0: loss does not backprop through decoder/bottleneck, so many
+    # backbone parameters are forward-only; DDP requires find_unused_parameters=True.
     model = DDP(
         model,
         device_ids=[rank],
         output_device=rank,
-        find_unused_parameters=False,
+        find_unused_parameters=True,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
