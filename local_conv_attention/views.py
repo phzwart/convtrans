@@ -6,7 +6,22 @@ import torch
 from torch import Tensor, nn
 
 from .augmentations_ssl import DenseSSLViewCorruptor
-from .config import DenseLeJEPAObjectiveConfig
+from .config import DenseLeJEPAObjectiveConfig, DenseViewConfig
+from .synthetic_data import rotate_tensor_nchw
+
+
+def sample_pre_corrupt_rotation_deg(config: DenseViewConfig, device: torch.device) -> float:
+    """Return θ (degrees CCW) for one view’s rotate → corrupt → derotate pipeline."""
+    if config.pre_corrupt_rotation_quarter_turns:
+        k = int(torch.randint(0, 4, (1,), device=device).item())
+        return 90.0 * float(k)
+    lo, hi = config.pre_corrupt_rotation_deg
+    lo_f, hi_f = float(lo), float(hi)
+    span = hi_f - lo_f
+    if span > 0.0:
+        u = torch.rand((), device=device, dtype=torch.float32)
+        return lo_f + span * float(u.item())
+    return lo_f
 
 
 class DenseAlignedViewGenerator(nn.Module):
@@ -50,5 +65,20 @@ class DenseAlignedViewGenerator(nn.Module):
         elif self.config.views.mode != "aligned_same_geometry":
             raise ValueError(f"Unsupported view mode {self.config.views.mode!r}.")
 
-        views = [self.corruptor(x.clone()) for _ in range(self.config.num_views)]
+        views: list[Tensor] = []
+        pad = self.config.views.pre_corrupt_rotation_padding
+        for _ in range(self.config.num_views):
+            xv = x.clone()
+            if self.config.views.pre_corrupt_rotation:
+                theta = sample_pre_corrupt_rotation_deg(self.config.views, xv.device)
+                if abs(theta) > 1e-8:
+                    xv = rotate_tensor_nchw(xv, theta, padding_mode=pad)
+                    xv = self.corruptor(xv)
+                    xv = rotate_tensor_nchw(xv, -theta, padding_mode=pad)
+                else:
+                    # No extra RNG vs ``pre_corrupt_rotation=False`` when range is (0, 0).
+                    xv = self.corruptor(xv)
+            else:
+                xv = self.corruptor(xv)
+            views.append(xv)
         return torch.stack(views, dim=1), valid_mask

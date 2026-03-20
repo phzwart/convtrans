@@ -72,6 +72,14 @@ def test_disc_square_dataset_rotation_deterministic_with_generator() -> None:
     assert -32 <= a[1] <= 32 and -32 <= a[2] <= 32
 
 
+def test_rotate_tensor_nchw_batched_shape() -> None:
+    from local_conv_attention import rotate_tensor_nchw
+
+    x = torch.randn(3, 2, 16, 16)
+    y = rotate_tensor_nchw(x, 15.0, padding_mode="reflection")
+    assert y.shape == x.shape
+
+
 def test_shift_image_2d_zero_pad_moves_content() -> None:
     from local_conv_attention import shift_image_2d_zero_pad
 

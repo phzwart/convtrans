@@ -250,10 +250,26 @@ class DenseViewConfig:
     same_geometry: bool = True
     shared_crop_ratio: float = 0.875
     corruption: DenseViewCorruptionConfig = field(default_factory=DenseViewCorruptionConfig)
+    #: If True: each view does rotate(θ) → photometric corruption → rotate(−θ) so **pixel indices
+    #: stay aligned** with the original grid (dense invariance still well-posed). Corruptions act in a
+    #: rotated frame; use ``reflection`` padding to soften borders vs ``zeros``.
+    pre_corrupt_rotation: bool = False
+    pre_corrupt_rotation_deg: tuple[float, float] = (0.0, 360.0)
+    #: If True, θ is uniform on ``{0, 90, 180, 270}`` (ignores ``pre_corrupt_rotation_deg`` for
+    #: sampling). Exact quarter turns avoid fractional ``grid_sample`` blur from arbitrary angles.
+    pre_corrupt_rotation_quarter_turns: bool = False
+    pre_corrupt_rotation_padding: Literal["zeros", "border", "reflection"] = "reflection"
 
     def validate(self) -> None:
         if not 0.0 < self.shared_crop_ratio <= 1.0:
             raise ValueError("lejepa.views.shared_crop_ratio must be in (0, 1].")
+        lo, hi = self.pre_corrupt_rotation_deg
+        if hi < lo:
+            raise ValueError("lejepa.views.pre_corrupt_rotation_deg must satisfy low <= high.")
+        if self.pre_corrupt_rotation_padding not in ("zeros", "border", "reflection"):
+            raise ValueError(
+                'lejepa.views.pre_corrupt_rotation_padding must be "zeros", "border", or "reflection".'
+            )
         self.corruption.validate()
 
 

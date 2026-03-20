@@ -51,6 +51,7 @@ from .synthetic_data import (
     generate_disc_square_image,
     make_disc_square_types,
     rotate_image_2d,
+    rotate_tensor_nchw,
     shift_image_2d_zero_pad,
 )
 from .swin import SwinUNet
@@ -127,6 +128,7 @@ __all__ = [
     "flattened_local_attention_mask",
     "generate_disc_square_image",
     "rotate_image_2d",
+    "rotate_tensor_nchw",
     "shift_image_2d_zero_pad",
     "load_experiment_config",
     "local_attention_from_qkv",

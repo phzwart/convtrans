@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from local_conv_attention.config import DenseLeJEPAObjectiveConfig
-from local_conv_attention.views import DenseAlignedViewGenerator
+from local_conv_attention.views import DenseAlignedViewGenerator, sample_pre_corrupt_rotation_deg
 from local_conv_attention import DenseLeJEPAModel, HEAUNetModelConfig
 
 
@@ -48,6 +48,41 @@ def test_shared_crop_returns_valid_mask_and_downsampled_mask() -> None:
 
     assert out["valid_mask"] is not None
     assert out["valid_mask"].shape[-2:] == out["latents"].shape[-2:]
+
+
+def test_pre_corrupt_rotation_quarter_turns_samples_cardinals() -> None:
+    cfg = DenseLeJEPAObjectiveConfig(num_views=1).views
+    cfg.pre_corrupt_rotation_quarter_turns = True
+    torch.manual_seed(123)
+    for _ in range(256):
+        theta = sample_pre_corrupt_rotation_deg(cfg, torch.device("cpu"))
+        assert theta in {0.0, 90.0, 180.0, 270.0}, theta
+
+
+def test_pre_corrupt_rotation_zero_deg_preserves_pixel_identity() -> None:
+    """``rotate(0) → corrupt → rotate(0)`` must match plain corruption (token grid unchanged)."""
+    cfg = DenseLeJEPAObjectiveConfig(num_views=2)
+    cfg.views.pre_corrupt_rotation = True
+    cfg.views.pre_corrupt_rotation_deg = (0.0, 0.0)
+    cfg.views.pre_corrupt_rotation_padding = "reflection"
+    cfg.views.corruption.intensity_jitter = False
+    cfg.views.corruption.blur = False
+    cfg.views.corruption.gaussian_noise = False
+    cfg.views.corruption.random_block_mask = True
+    cfg.views.corruption.block_mask_ratio = 0.125
+    cfg.views.corruption.block_mask_num_blocks = 2
+    gen_rot = DenseAlignedViewGenerator(cfg)
+
+    cfg_plain = DenseLeJEPAObjectiveConfig(num_views=2)
+    cfg_plain.views.corruption = cfg.views.corruption
+    gen_plain = DenseAlignedViewGenerator(cfg_plain)
+
+    x = torch.randn(2, 1, 24, 24)
+    torch.manual_seed(0)
+    v_rot, _ = gen_rot(x)
+    torch.manual_seed(0)
+    v_plain, _ = gen_plain(x)
+    torch.testing.assert_close(v_rot, v_plain)
 
 
 def test_small_multi_block_masking_masks_multiple_local_regions() -> None:

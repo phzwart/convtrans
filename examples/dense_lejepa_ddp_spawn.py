@@ -178,6 +178,12 @@ def _worker(
     config.model.lejepa.sigreg.per_view = True
 
     config.model.lejepa.views.mode = "aligned_same_geometry"
+    # Rotate → corrupt → derotate: same pixel grid as input (dense tokens aligned); ``reflection`` softens borders.
+    config.model.lejepa.views.pre_corrupt_rotation = True
+    config.model.lejepa.views.pre_corrupt_rotation_deg = (0.0, 360.0)
+    # For θ ∈ {0,90,180,270} only (less grid_sample blur): set quarter_turns True (deg unused for sampling).
+    # config.model.lejepa.views.pre_corrupt_rotation_quarter_turns = True
+    config.model.lejepa.views.pre_corrupt_rotation_padding = "reflection"
     config.model.lejepa.views.corruption.intensity_jitter = True
     config.model.lejepa.views.corruption.blur = False
     config.model.lejepa.views.corruption.gaussian_noise = True

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from itertools import product
-from typing import Sequence
+from typing import Literal, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -168,6 +168,44 @@ def rotate_image_2d(image_1hw: Tensor, degrees: float) -> Tensor:
         align_corners=True,
     )
     return out.squeeze(0)
+
+
+def rotate_tensor_nchw(
+    x_bchw: Tensor,
+    degrees: float,
+    *,
+    padding_mode: Literal["zeros", "border", "reflection"] = "zeros",
+) -> Tensor:
+    """Rotate a batch ``[B, C, H, W]`` by ``degrees`` CCW about the image center (shared warp).
+
+    Uses ``grid_sample`` with the chosen ``padding_mode``.  ``reflection`` / ``border`` reduce
+    dark wedges vs ``zeros`` when composing rotate → op → inverse rotate in view generation.
+    """
+    if x_bchw.dim() != 4:
+        raise ValueError(f"rotate_tensor_nchw expects [B, C, H, W], got {tuple(x_bchw.shape)}.")
+    b, _, height, width = x_bchw.shape
+    if abs(float(degrees)) < 1e-8:
+        return x_bchw
+    device = x_bchw.device
+    dtype = x_bchw.dtype
+    angle = math.radians(float(degrees))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+
+    yy = torch.linspace(-1.0, 1.0, height, device=device, dtype=dtype)
+    xx = torch.linspace(-1.0, 1.0, width, device=device, dtype=dtype)
+    ys, xs = torch.meshgrid(yy, xx, indexing="ij")
+    x_src = xs * cos_a + ys * sin_a
+    y_src = -xs * sin_a + ys * cos_a
+    grid = torch.stack((x_src, y_src), dim=-1).expand(b, -1, -1, -1)
+
+    return F.grid_sample(
+        x_bchw,
+        grid,
+        mode="bilinear",
+        padding_mode=padding_mode,
+        align_corners=True,
+    )
 
 
 class DiscSquareDataset(Dataset):
