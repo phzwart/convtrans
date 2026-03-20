@@ -207,7 +207,7 @@ print(out["latents"].shape, out["inv_loss"], out["sigreg_loss"], out["loss"])
 - `checkpoint_latest.pt` — copy of the last epoch (stable path for notebooks)
 - `scalars.json` — per-epoch losses
 
-The default `DiscSquareDataset` applies a **uniform random rotation** in `[0°, 360°)` per sample (via `rotate_image_2d`). Pass `random_rotation=False` for axis-aligned synthetic shapes, or `rotation_range_deg=(a, b)` / `generator=` to control the distribution or seed.
+The default `DiscSquareDataset` applies **integer pixel shifts** (zero-padded, default range `[-32, 32]` per axis) **then** a **uniform random rotation** in `[0°, 360°)` (via `shift_image_2d_zero_pad` then `rotate_image_2d`). Use `random_shift=False` / `random_rotation=False`, or `shift_px_range=`, `rotation_range_deg=`, and `generator=` to control augmentation and seeding.
 
 Load and run on new images:
 
@@ -221,7 +221,7 @@ model, experiment_cfg = load_dense_lejepa_from_checkpoint(
 model.eval()
 ```
 
-**Notebook:** `examples/inspect_dense_lejepa_checkpoint.ipynb` — browse `dense_lejepa_ddp_outputs/`, load a checkpoint on CPU, run inference on synthetic or custom grayscale images, plot per-hook latent norm maps.
+**Notebook:** `examples/inspect_dense_lejepa_checkpoint.ipynb` — browse `dense_lejepa_ddp_outputs/`, load a checkpoint on CPU, run inference on synthetic or custom grayscale images, plot per-hook latent norm maps, and run **linear pixel-decoder + edge-correlation probes** to relate latents to input intensity.
 
 ## Running tests
 

@@ -106,6 +106,34 @@ def generate_disc_square_image(
     return image.unsqueeze(0)
 
 
+def shift_image_2d_zero_pad(image_1hw: Tensor, dy: int, dx: int) -> Tensor:
+    """Translate a single-channel map ``[1, H, W]`` by integer ``(dy, dx)`` pixels.
+
+    Positive ``dy`` moves content **down**, positive ``dx`` moves content **right**.
+    Out-of-bounds source is filled with **zero** (same border style as :func:`rotate_image_2d`).
+    """
+    if image_1hw.dim() != 3 or image_1hw.size(0) != 1:
+        raise ValueError(f"shift_image_2d_zero_pad expects [1, H, W], got {tuple(image_1hw.shape)}.")
+    _, h, w = image_1hw.shape
+    out = torch.zeros_like(image_1hw)
+    dy_i, dx_i = int(dy), int(dx)
+    if dy_i >= 0:
+        y_d0, y_d1 = dy_i, h
+        y_s0, y_s1 = 0, h - dy_i
+    else:
+        y_d0, y_d1 = 0, h + dy_i
+        y_s0, y_s1 = -dy_i, h
+    if dx_i >= 0:
+        x_d0, x_d1 = dx_i, w
+        x_s0, x_s1 = 0, w - dx_i
+    else:
+        x_d0, x_d1 = 0, w + dx_i
+        x_s0, x_s1 = -dx_i, w
+    if y_d1 > y_d0 and x_d1 > x_d0:
+        out[:, y_d0:y_d1, x_d0:x_d1] = image_1hw[:, y_s0:y_s1, x_s0:x_s1]
+    return out
+
+
 def rotate_image_2d(image_1hw: Tensor, degrees: float) -> Tensor:
     """Rotate a single-channel map ``[1, H, W]`` by ``degrees`` counter-clockwise about the center.
 
@@ -152,6 +180,8 @@ class DiscSquareDataset(Dataset):
         image_size: int = 128,
         radii: Sequence[int] = (28, 40),
         square_sizes: Sequence[int] = (8, 14),
+        random_shift: bool = True,
+        shift_px_range: tuple[int, int] = (-32, 32),
         random_rotation: bool = True,
         rotation_range_deg: tuple[float, float] = (0.0, 360.0),
         generator: torch.Generator | None = None,
@@ -162,7 +192,12 @@ class DiscSquareDataset(Dataset):
         low, high = rotation_range_deg
         if high < low:
             raise ValueError("rotation_range_deg must satisfy low <= high.")
+        s_lo, s_hi = shift_px_range
+        if s_hi < s_lo:
+            raise ValueError("shift_px_range must satisfy low <= high.")
         self.image_size = image_size
+        self.random_shift = random_shift
+        self.shift_px_range = (int(s_lo), int(s_hi))
         self.random_rotation = random_rotation
         self.rotation_range_deg = (float(low), float(high))
         self.generator = generator
@@ -178,6 +213,19 @@ class DiscSquareDataset(Dataset):
             spec,
             image_size=self.image_size,
         )
+        shift_dy = 0
+        shift_dx = 0
+        if self.random_shift:
+            lo, hi = self.shift_px_range
+            high = hi + 1  # ``torch.randint`` upper bound is exclusive
+            if self.generator is not None:
+                shift_dy = int(torch.randint(lo, high, (1,), generator=self.generator).item())
+                shift_dx = int(torch.randint(lo, high, (1,), generator=self.generator).item())
+            else:
+                shift_dy = int(torch.randint(lo, high, (1,)).item())
+                shift_dx = int(torch.randint(lo, high, (1,)).item())
+            image = shift_image_2d_zero_pad(image, shift_dy, shift_dx)
+
         rotation_deg = 0.0
         if self.random_rotation:
             lo, hi = self.rotation_range_deg
@@ -194,5 +242,7 @@ class DiscSquareDataset(Dataset):
             "near_density": spec.near_density,
             "far_density": spec.far_density,
             "square_size": spec.square_size,
+            "shift_dy": shift_dy,
+            "shift_dx": shift_dx,
             "rotation_deg": rotation_deg,
         }
