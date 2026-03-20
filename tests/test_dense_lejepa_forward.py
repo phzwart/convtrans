@@ -37,6 +37,19 @@ def test_dense_lejepa_forward_runs_end_to_end() -> None:
     assert torch.isfinite(out["loss"])
 
 
+def test_dense_lejepa_forward_with_backbone_gradient_checkpointing() -> None:
+    cfg = _make_config()
+    cfg.backbone_gradient_checkpointing = True
+    cfg.validate()
+    model = DenseLeJEPAModel(cfg)
+    x = torch.randn(2, 1, 32, 32)
+    out = model(x)
+    assert torch.isfinite(out["loss"])
+    out["loss"].backward()
+    assert model.backbone.stem.proj.conv.weight.grad is not None
+    assert model.projector.proj[0].weight.grad is not None
+
+
 def test_dense_lejepa_backward_flows_through_backbone_and_projector() -> None:
     torch.manual_seed(3)
     model = DenseLeJEPAModel(_make_config())

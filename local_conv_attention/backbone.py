@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from .block import LocalTransformerBlock2d
 from .config import HEAUNetModelConfig
@@ -20,6 +21,7 @@ class HEABackbone(nn.Module):
         super().__init__()
         config.validate()
         self.config = config
+        self._grad_ckpt = bool(config.backbone_gradient_checkpointing)
         # Primary hook for ``forward()`` / ``forward_features``[\"latent_feature\"]; multi-hook LeJEPA uses ``resolve_latent_tensor``.
         self.latent_source = config.latent.resolved_sources()[0]
 
@@ -273,10 +275,31 @@ class HEABackbone(nn.Module):
             decoder_features[target_scale] = x
         return x, stage_debug, decoder_features
 
+    def _decode_after_encode(self, *encoder_features: Tensor) -> tuple[Tensor, dict[int, Tensor], dict[int, Tensor]]:
+        enc_list = list(encoder_features)
+        memories = self._progressive_elevator(self._build_semantic_memories(enc_list))
+        top_feature, _, decoder_features = self.decode_with_memories(enc_list, memories)
+        return top_feature, memories, decoder_features
+
     def forward_features(self, x: Tensor) -> dict[str, Any]:
-        encoder_features = self.encode_features(x)
-        memories = self._progressive_elevator(self._build_semantic_memories(encoder_features))
-        top_feature, _, decoder_features = self.decode_with_memories(encoder_features, memories)
+        if self._grad_ckpt:
+            encoder_features = list(
+                checkpoint(
+                    lambda inp: tuple(self.encode_features(inp)),
+                    x,
+                    use_reentrant=False,
+                )
+            )
+            top_feature, memories, decoder_features = checkpoint(
+                lambda *enc: self._decode_after_encode(*enc),
+                *encoder_features,
+                use_reentrant=False,
+            )
+        else:
+            encoder_features = self.encode_features(x)
+            memories = self._progressive_elevator(self._build_semantic_memories(encoder_features))
+            top_feature, _, decoder_features = self.decode_with_memories(encoder_features, memories)
+
         latent_feature = self._resolve_latent_feature(
             top_feature=top_feature,
             encoder_features=encoder_features,
@@ -298,6 +321,11 @@ class HEABackbone(nn.Module):
         target_slice: tuple[tuple[int, int], tuple[int, int]] | None = None,
         batch_index: int = 0,
     ) -> dict[str, Any]:
+        if self._grad_ckpt:
+            raise RuntimeError(
+                "forward_with_stage_debug does not support backbone_gradient_checkpointing; "
+                "set backbone_gradient_checkpointing=False for debug forwards."
+            )
         encoder_features = self.encode_features(x)
         memories = self._progressive_elevator(self._build_semantic_memories(encoder_features))
         top_feature, stage_debug, decoder_features = self.decode_with_memories(

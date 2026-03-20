@@ -402,6 +402,10 @@ class HEAUNetModelConfig:
     use_raw_skips: bool = False
     patch_size: int = 3
     mlp_ratio: float = 4.0
+    #: If True, ``HEABackbone.forward_features`` uses gradient checkpointing on encode + decode
+    #: to trade extra compute for lower activation memory (helps dense LeJEPA / large batches).
+    #: Prefer ``groupnorm`` over ``batchnorm`` when enabled (BN updates twice per step during ckpt).
+    backbone_gradient_checkpointing: bool = False
     swin_window_size: int = 7
     swin_stage_heads: list[int] = field(default_factory=lambda: [2, 4, 8, 8])
     bottleneck_depth: int = 1

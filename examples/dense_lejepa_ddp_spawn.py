@@ -15,9 +15,13 @@ Example from a notebook (repo root on ``sys.path``)::
 
     history = run_spawn_training(ROOT, epochs=50)
 
-CLI::
+CLI (**needs ≥2 CUDA GPUs**; NCCL). Training uses **rotate** by default: each batch step picks one latent hook via ``rotate_latent_index=global_step`` (cycles all hooks from ``default_all_latent_hooks``). For **joint** (every hook every batch), set ``step_mode="joint"`` in ``_worker`` and you can drop the ``rotate_latent_index`` argument.
 
-    python examples/dense_lejepa_ddp_spawn.py --project-root /path/to/convtrans
+::
+
+    cd /path/to/convtrans
+    python examples/dense_lejepa_ddp_spawn.py --project-root . --epochs 50 --batch-size 8
+    # optional: --output-dir ./my_run
 
 **Outputs** (under ``--output-dir``, default ``examples/dense_lejepa_ddp_outputs/<timestamp>/``):
 
@@ -136,12 +140,15 @@ def _worker(
     config.model.attention.head_dim = 16
     config.model.attention.operator_backend = "optimized"
 
+    # One dense projector per pyramid hook: all encoder_* scales, bottleneck, decoder_*, top.
     config.model.latent.sources = default_all_latent_hooks(len(config.model.channel_multipliers))
+    # ``rotate``: one hook per batch (``rotate_latent_index=global_step`` below); ``joint``: all hooks every batch.
     config.model.latent.step_mode = "rotate"
     config.model.latent.latent_dim = 32
     config.model.latent.projector_depth = 1
     config.model.latent.normalize_latents = False
 
+    # HEA attention fusion targets (not the same as latent.sources); backbone + all latent heads still exist.
     config.model.hea.enabled_decoder_stages = [0]
     config.model.semantic_memory.window_sizes = [7, 7, 7]
     config.model.hea.per_scale_window_sizes = [7, 7, 7]
@@ -162,6 +169,9 @@ def _worker(
     config.model.lejepa.views.corruption.random_block_mask = True
     config.model.lejepa.views.corruption.block_mask_ratio = 0.04
     config.model.lejepa.views.corruption.block_mask_num_blocks = 4
+
+    # Trades ~2× backbone forward compute for much lower activation memory (OOM mitigation).
+    config.model.backbone_gradient_checkpointing = True
 
     config.validate()
 
