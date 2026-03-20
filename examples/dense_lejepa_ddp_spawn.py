@@ -18,6 +18,25 @@ Example from a notebook (repo root on ``sys.path``)::
 CLI::
 
     python examples/dense_lejepa_ddp_spawn.py --project-root /path/to/convtrans
+
+**Outputs** (under ``--output-dir``, default ``examples/dense_lejepa_ddp_outputs/<timestamp>/``):
+
+- ``config.json`` — full experiment config for rebuilding the model.
+- ``architecture.txt`` — ``str(DenseLeJEPAModel)`` for human inspection.
+- ``checkpoint_epoch_%04d.pt`` — every epoch: weights, optimizer, history, embedded ``config_dict``.
+- ``checkpoint_latest.pt`` — copy of the most recent epoch (stable path for notebooks).
+- ``scalars.json`` — same data as the legacy ``examples/.dense_lejepa_spawn_history.json`` path.
+
+Load for inference / feature extraction on new images::
+
+    from examples.dense_lejepa_ddp_spawn import load_dense_lejepa_from_checkpoint
+
+    model, experiment_cfg = load_dense_lejepa_from_checkpoint(
+        "path/to/checkpoint_latest.pt", map_location="cpu"
+    )
+    model.eval()
+    with torch.no_grad():
+        out = model(images_tensor)  # keys: latents, latents_by_source, loss, ...
 """
 
 from __future__ import annotations
@@ -26,9 +45,17 @@ import argparse
 import json
 import os
 import random
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import torch
+
+    from local_conv_attention.config import HEAExperimentConfig
+    from local_conv_attention.dense_lejepa import DenseLeJEPAModel
 
 
 def _worker(
@@ -40,6 +67,7 @@ def _worker(
     master_addr: str,
     master_port: str,
     history_json: str,
+    output_dir: str,
 ) -> None:
     import numpy as np
     import torch
@@ -59,6 +87,8 @@ def _worker(
         load_experiment_config,
     )
 
+    out_path = Path(output_dir)
+
     os.environ["MASTER_ADDR"] = master_addr
     os.environ["MASTER_PORT"] = master_port
     os.environ["RANK"] = str(rank)
@@ -67,6 +97,10 @@ def _worker(
 
     torch.cuda.set_device(rank)
     dist.init_process_group(backend="nccl", init_method="env://")
+
+    if rank == 0:
+        out_path.mkdir(parents=True, exist_ok=True)
+    dist.barrier()
 
     device = torch.device(f"cuda:{rank}")
 
@@ -103,6 +137,7 @@ def _worker(
     config.model.attention.operator_backend = "optimized"
 
     config.model.latent.sources = default_all_latent_hooks(len(config.model.channel_multipliers))
+    config.model.latent.step_mode = "rotate"
     config.model.latent.latent_dim = 32
     config.model.latent.projector_depth = 1
     config.model.latent.normalize_latents = False
@@ -130,6 +165,11 @@ def _worker(
 
     config.validate()
 
+    if rank == 0:
+        # Human-readable full config for rebuilding ``DenseLeJEPAModel(config.model)``.
+        with (out_path / "config.json").open("w", encoding="utf-8") as fh:
+            json.dump(config.to_dict(), fh, indent=2)
+
     model = DenseLeJEPAModel(config.model).to(device)
     # With full ``latent.sources`` all backbone submodules get loss signal; keep True if you
     # use a subset of hooks (e.g. only encoder_0).
@@ -141,7 +181,15 @@ def _worker(
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+    if rank == 0:
+        with (out_path / "architecture.txt").open("w", encoding="utf-8") as fh:
+            fh.write(str(model.module))
+            fh.write("\n\n--- parameters ---\n")
+            num_params = sum(p.numel() for p in model.module.parameters())
+            fh.write(f"total_numel: {num_params:,}\n")
+
     history: dict[str, list[float]] = {"loss": [], "inv_loss": [], "sigreg_loss": []}
+    global_step = 0
     try:
         for epoch in range(epochs):
             train_sampler.set_epoch(epoch)
@@ -151,7 +199,8 @@ def _worker(
             for batch in train_loader:
                 images = batch["image"].to(device, non_blocking=True)
                 optimizer.zero_grad(set_to_none=True)
-                out = model(images)
+                out = model(images, rotate_latent_index=global_step)
+                global_step += 1
                 out["loss"].backward()
                 optimizer.step()
                 for key in history:
@@ -174,11 +223,67 @@ def _worker(
                     f"inv={history['inv_loss'][-1]:.4f} | sigreg={history['sigreg_loss'][-1]:.4f}"
                 )
 
+            if rank == 0:
+                epoch_tag = epoch + 1
+                ckpt = {
+                    "epoch": epoch_tag,
+                    "global_step": global_step,
+                    "model_state_dict": model.module.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "history": {k: list(v) for k, v in history.items()},
+                    "config_dict": config.to_dict(),
+                }
+                epoch_file = out_path / f"checkpoint_epoch_{epoch_tag:04d}.pt"
+                torch.save(ckpt, epoch_file)
+                shutil.copy2(epoch_file, out_path / "checkpoint_latest.pt")
+
         if rank == 0:
             Path(history_json).write_text(json.dumps(history))
+            with (out_path / "scalars.json").open("w", encoding="utf-8") as fh:
+                json.dump(history, fh, indent=2)
+            readme = out_path / "README_OUTPUT.txt"
+            readme.write_text(
+                "Dense LeJEPA DDP spawn — training artifacts\n\n"
+                "- config.json: experiment dict; rebuild with "
+                "local_conv_attention.experiment_config_from_dict(...)\n"
+                "- architecture.txt: model module string + parameter count\n"
+                "- checkpoint_epoch_####.pt: one per epoch (weights, optimizer, history, config_dict)\n"
+                "- checkpoint_latest.pt: copy of last epoch\n"
+                "- scalars.json: loss / inv_loss / sigreg per epoch\n\n"
+                "Python load:\n"
+                "  from examples.dense_lejepa_ddp_spawn import load_dense_lejepa_from_checkpoint\n"
+                "  model, cfg = load_dense_lejepa_from_checkpoint('checkpoint_latest.pt')\n",
+                encoding="utf-8",
+            )
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()
+
+
+def load_dense_lejepa_from_checkpoint(
+    checkpoint_path: str | Path,
+    *,
+    map_location: str | None = None,
+) -> tuple[DenseLeJEPAModel, HEAExperimentConfig]:
+    """Load ``DenseLeJEPAModel`` + ``HEAExperimentConfig`` from a spawn training checkpoint.
+
+    Checkpoints embed ``config_dict``; you can also train with the standalone ``config.json``
+    in the same output folder if you prefer.
+    """
+    import torch
+
+    from local_conv_attention import DenseLeJEPAModel, experiment_config_from_dict
+
+    try:
+        ckpt = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    except TypeError:  # PyTorch < 2.0
+        ckpt = torch.load(checkpoint_path, map_location=map_location)
+    if "config_dict" not in ckpt:
+        raise KeyError(f"Checkpoint {checkpoint_path} has no 'config_dict'; use a training checkpoint.")
+    experiment_cfg = experiment_config_from_dict(ckpt["config_dict"])
+    model = DenseLeJEPAModel(experiment_cfg.model)
+    model.load_state_dict(ckpt["model_state_dict"])
+    return model, experiment_cfg
 
 
 def run_spawn_training(
@@ -188,8 +293,13 @@ def run_spawn_training(
     batch_size: int = 8,
     master_addr: str = "127.0.0.1",
     master_port: str | None = None,
+    output_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """Spawn one process per visible GPU; return training history (rank 0 metrics only)."""
+    """Spawn one process per visible GPU; return training history (rank 0 metrics only).
+
+    Artifacts are written under ``output_dir`` (default timestamped folder under
+    ``<repo>/examples/dense_lejepa_ddp_outputs/``).
+    """
     import torch
     import torch.multiprocessing as mp
 
@@ -206,6 +316,11 @@ def run_spawn_training(
 
     history_json = str(root / "examples" / ".dense_lejepa_spawn_history.json")
 
+    if output_dir is None:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = root / "examples" / "dense_lejepa_ddp_outputs" / stamp
+    output_dir = Path(output_dir).resolve()
+
     mp.spawn(
         _worker,
         args=(
@@ -216,6 +331,7 @@ def run_spawn_training(
             master_addr,
             master_port,
             history_json,
+            str(output_dir),
         ),
         nprocs=world_size,
         join=True,
@@ -239,6 +355,13 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--master-addr", type=str, default="127.0.0.1")
     parser.add_argument("--master-port", type=str, default=None)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for checkpoints, config.json, architecture.txt "
+        "(default: examples/dense_lejepa_ddp_outputs/<timestamp>/)",
+    )
     args = parser.parse_args()
 
     run_spawn_training(
@@ -247,6 +370,7 @@ def main() -> None:
         batch_size=args.batch_size,
         master_addr=args.master_addr,
         master_port=args.master_port,
+        output_dir=args.output_dir,
     )
 
 

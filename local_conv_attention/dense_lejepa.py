@@ -4,7 +4,8 @@ This module learns dense latent fields from multiple aligned views of the same
 image. It is symmetric and teacher-free: there is no EMA target network, no
 predictor head, and no stop-gradient branch. Training minimizes a dense
 invariance loss across aligned views plus SIGReg over the resulting latent
-vectors. Multiple backbone hooks (multi-scale) can be trained jointly.
+vectors. Multiple backbone hooks (multi-scale) can be trained **jointly**
+(averaged loss) or **rotated** (one hook per batch via ``rotate_latent_index``).
 """
 
 from __future__ import annotations
@@ -150,12 +151,14 @@ class DenseLeJEPAModel(nn.Module):
         *,
         batch: int,
         num_views: int,
+        sources_subset: list[str] | None = None,
     ) -> dict[str, Tensor]:
         top = pack["top_feature"]
         encoder_features = pack["encoder_features"]
         decoder_features = pack["decoder_features"]
+        names = sources_subset if sources_subset is not None else self._latent_sources
         latents_by_source: dict[str, Tensor] = {}
-        for source in self._latent_sources:
+        for source in names:
             feat = self.backbone.resolve_latent_tensor(
                 source,
                 top_feature=top,
@@ -167,26 +170,41 @@ class DenseLeJEPAModel(nn.Module):
             latents_by_source[source] = proj.view(batch, num_views, dim, h, w)
         return latents_by_source
 
+    def _sources_for_step(self, rotate_latent_index: int | None) -> list[str]:
+        if self.config.latent.step_mode == "joint":
+            return list(self._latent_sources)
+        idx = 0 if rotate_latent_index is None else int(rotate_latent_index) % len(self._latent_sources)
+        return [self._latent_sources[idx]]
+
     def forward(
         self,
         x: Tensor,
         *,
         valid_mask: Tensor | None = None,
+        rotate_latent_index: int | None = None,
     ) -> dict[str, Any]:
+        """Args:
+            rotate_latent_index: When ``latent.step_mode == \"rotate\"``, which hook to train
+                this step (typically ``global_batch_index % num_hooks``). If omitted, uses hook 0.
+        """
         views, generated_valid_mask = self._prepare_views(x)
         if valid_mask is None:
             valid_mask = generated_valid_mask
 
         batch, num_views, channels, height, width = views.shape
+        active_sources = self._sources_for_step(rotate_latent_index)
+
         if self.config.lejepa.sequential_view_forward:
-            accum: dict[str, list[Tensor]] = {s: [] for s in self._latent_sources}
+            accum: dict[str, list[Tensor]] = {s: [] for s in active_sources}
             for view_index in range(num_views):
                 chunk = views[:, view_index].contiguous()
                 pack = self.backbone.forward_features(chunk)
-                partial = self._latents_from_feature_pack(pack, batch=batch, num_views=1)
-                for s in self._latent_sources:
+                partial = self._latents_from_feature_pack(
+                    pack, batch=batch, num_views=1, sources_subset=active_sources
+                )
+                for s in active_sources:
                     accum[s].append(partial[s])
-            latents_by_source = {s: torch.cat(accum[s], dim=1) for s in self._latent_sources}
+            latents_by_source = {s: torch.cat(accum[s], dim=1) for s in active_sources}
         else:
             flat_views = views.reshape(batch * num_views, channels, height, width)
             pack = self.backbone.forward_features(flat_views)
@@ -194,29 +212,31 @@ class DenseLeJEPAModel(nn.Module):
                 pack,
                 batch=batch,
                 num_views=num_views,
+                sources_subset=active_sources,
             )
 
-        primary = self._latent_sources[0]
+        primary = active_sources[0]
         latents = latents_by_source[primary]
         latent_valid_mask = self._downsample_valid_mask(valid_mask, latents.shape[-2:])
 
         inv_total = latents.new_zeros(())
         sig_total = latents.new_zeros(())
-        n_hooks = len(self._latent_sources)
-        for source in self._latent_sources:
+        n_terms = len(active_sources)
+        for source in active_sources:
             lat = latents_by_source[source]
             mask_s = self._downsample_valid_mask(valid_mask, lat.shape[-2:])
             loss_valid_mask = mask_s if self.config.lejepa.invariance.loss_on_valid_only else None
             inv_total = inv_total + dense_invariance_loss(lat, valid_mask=loss_valid_mask)
             sig_total = sig_total + self._sigreg_loss(lat, loss_valid_mask)
 
-        inv_loss = inv_total / n_hooks
-        sigreg_loss = sig_total / n_hooks
+        inv_loss = inv_total / n_terms
+        sigreg_loss = sig_total / n_terms
         lambda_sigreg = self.config.lejepa.lambda_sigreg
         loss = (1.0 - lambda_sigreg) * inv_loss + lambda_sigreg * sigreg_loss
         return {
             "latents": latents,
             "latents_by_source": latents_by_source,
+            "active_latent_source": primary,
             "inv_loss": inv_loss,
             "sigreg_loss": sigreg_loss,
             "loss": loss,

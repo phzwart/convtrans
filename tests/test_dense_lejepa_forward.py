@@ -50,6 +50,22 @@ def test_dense_lejepa_backward_flows_through_backbone_and_projector() -> None:
     assert projector_grad is not None
 
 
+def test_dense_lejepa_rotate_step_mode_cycles_hooks() -> None:
+    cfg = _make_config()
+    cfg.latent.sources = ["encoder_0", "top"]
+    cfg.latent.step_mode = "rotate"
+    cfg.validate()
+    model = DenseLeJEPAModel(cfg)
+    x = torch.randn(2, 1, 32, 32)
+    o0 = model(x, rotate_latent_index=0)
+    o1 = model(x, rotate_latent_index=1)
+    assert o0["active_latent_source"] == "encoder_0"
+    assert o1["active_latent_source"] == "top"
+    assert set(o0["latents_by_source"].keys()) == {"encoder_0"}
+    assert set(o1["latents_by_source"].keys()) == {"top"}
+    (o0["loss"] + o1["loss"]).backward()
+
+
 def test_dense_lejepa_multi_source_trains_all_hooks() -> None:
     cfg = _make_config()
     cfg.latent.sources = ["encoder_0", "top"]

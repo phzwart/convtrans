@@ -96,7 +96,7 @@ pip install -e .
 
 ### Dense LeJEPA / VRAM
 
-Dense LeJEPA runs the backbone on **`batch_size × num_views`** images per step unless you enable **`lejepa.sequential_view_forward`** (runs one view at a time; lower peak memory, slightly slower). Set **`latent.sources`** to a list of hooks (`encoder_<k>`, `bottleneck`, `decoder_<k>`, `top`) to train **multiple** dense latent heads at once (equal average of invariance + SIGReg per hook); use **`default_all_latent_hooks(num_scales)`** for every pyramid location. Single-hook **`latent.source`** still works when **`latent.sources`** is unset. If you hit CUDA OOM, try in order: **lower `batch_size`**, enable **`sequential_view_forward`**, reduce **`num_views`** (minimum 2), use fewer **`latent.sources`**, shrink **`base_channels` / `channel_multipliers`**, or lower **`sigreg.num_slices`**. PyTorch also suggests `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` when fragmentation is an issue.
+Dense LeJEPA runs the backbone on **`batch_size × num_views`** images per step unless you enable **`lejepa.sequential_view_forward`** (runs one view at a time; lower peak memory, slightly slower). Set **`latent.sources`** to a list of hooks (`encoder_<k>`, `bottleneck`, `decoder_<k>`, `top`) to train **multiple** dense latent heads. Use **`latent.step_mode`**: **`joint`** averages the loss over all hooks every batch; **`rotate`** trains one hook per batch — pass **`rotate_latent_index=global_batch_step`** (e.g. increment each batch) so hooks cycle (`global_step % num_hooks`). That lowers per-step projector/SIGReg work versus **`joint`**. Use **`default_all_latent_hooks(num_scales)`** for every pyramid location. Single-hook **`latent.source`** still works when **`latent.sources`** is unset. If you hit CUDA OOM, try in order: **lower `batch_size`**, enable **`sequential_view_forward`**, reduce **`num_views`** (minimum 2), use fewer **`latent.sources`**, shrink **`base_channels` / `channel_multipliers`**, or lower **`sigreg.num_slices`**. PyTorch also suggests `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` when fragmentation is an issue.
 
 ## Quick usage
 
@@ -195,6 +195,26 @@ from local_conv_attention import build_model_from_yaml
 model = build_model_from_yaml("configs/hea_dense_lejepa_default.yaml")
 out = model(images)
 print(out["latents"].shape, out["inv_loss"], out["sigreg_loss"], out["loss"])
+```
+
+**Multi-GPU notebook / spawn** (`examples/dense_lejepa_ddp_spawn.py`): uses `torch.multiprocessing.spawn` (needs ≥2 visible GPUs). Each run writes a timestamped folder under `examples/dense_lejepa_ddp_outputs/` (override with `--output-dir`) containing:
+
+- `config.json` — full experiment config to rebuild the architecture
+- `architecture.txt` — `str(model)` plus parameter count
+- `checkpoint_epoch_####.pt` — weights, optimizer, scalar history, and embedded `config_dict` **every epoch**
+- `checkpoint_latest.pt` — copy of the last epoch (stable path for notebooks)
+- `scalars.json` — per-epoch losses
+
+Load and run on new images:
+
+```python
+from examples.dense_lejepa_ddp_spawn import load_dense_lejepa_from_checkpoint
+
+model, experiment_cfg = load_dense_lejepa_from_checkpoint(
+    "examples/dense_lejepa_ddp_outputs/<run>/checkpoint_latest.pt",
+    map_location="cpu",
+)
+model.eval()
 ```
 
 ## Running tests

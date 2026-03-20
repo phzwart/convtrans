@@ -142,6 +142,10 @@ class DenseLatentConfig:
 
     source: str = "top"
     sources: list[str] | None = None
+    #: ``joint`` — every forward averages loss over all ``sources``. ``rotate`` — each forward
+    #: should pass ``rotate_latent_index`` (e.g. ``global_batch_idx % num_hooks``) to train one
+    #: hook per batch, cycling through scales (lower memory / staged optimization).
+    step_mode: Literal["joint", "rotate"] = "joint"
     latent_dim: int = 128
     projector_depth: int = 1
     normalize_latents: bool = False
@@ -168,6 +172,8 @@ class DenseLatentConfig:
             raise ValueError("latent.sources (or latent.source) must list at least one hook.")
         for name in self.resolved_sources():
             _validate_latent_hook_name(name)
+        if self.step_mode not in ("joint", "rotate"):
+            raise ValueError('latent.step_mode must be "joint" or "rotate".')
 
 
 @dataclass
@@ -529,6 +535,9 @@ class HEAExperimentConfig:
 
 def _coerce_value(field_type: Any, value: Any) -> Any:
     origin = get_origin(field_type)
+    if value is None and origin in (UnionType, Union):
+        if type(None) in get_args(field_type):
+            return None
     if is_dataclass(field_type):
         return _dataclass_from_dict(field_type, value)
     if origin in (UnionType, Union):

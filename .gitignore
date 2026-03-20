@@ -10,3 +10,4 @@ __pycache__/
 build/
 dist/
 examples/.dense_lejepa_spawn_history.json
+examples/dense_lejepa_ddp_outputs/
