@@ -99,14 +99,19 @@ def _worker(
     os.environ["LOCAL_RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
 
-    torch.cuda.set_device(rank)
-    dist.init_process_group(backend="nccl", init_method="env://")
+    device = torch.device(f"cuda:{rank}")
+    torch.cuda.set_device(device)
+    # device_id (PyTorch 2.4+): ties the process group to this GPU and silences
+    # NCCL “guess device from rank” / barrier context warnings on Perlmutter-style setups.
+    try:
+        dist.init_process_group(backend="nccl", init_method="env://", device_id=device)
+    except TypeError:
+        dist.init_process_group(backend="nccl", init_method="env://")
 
     if rank == 0:
         out_path.mkdir(parents=True, exist_ok=True)
     dist.barrier()
 
-    device = torch.device(f"cuda:{rank}")
 
     torch.manual_seed(0)
     np.random.seed(0)
@@ -183,11 +188,14 @@ def _worker(
     model = DenseLeJEPAModel(config.model).to(device)
     # With full ``latent.sources`` all backbone submodules get loss signal; keep True if you
     # use a subset of hooks (e.g. only encoder_0).
+    # gradient_as_bucket_view=False: with backbone gradient checkpointing, some conv grads
+    # are non-contiguous; the default True bucket views then warn and can slow allreduce.
     model = DDP(
         model,
         device_ids=[rank],
         output_device=rank,
         find_unused_parameters=True,
+        gradient_as_bucket_view=False,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
