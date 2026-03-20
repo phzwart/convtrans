@@ -91,6 +91,12 @@ def _worker(
         load_experiment_config,
     )
 
+    def _contiguous_grad_hook(grad: torch.Tensor | None) -> torch.Tensor | None:
+        """Checkpoint + conv can produce oddly-strided grads; DDP reducer warns unless contiguous."""
+        if grad is None:
+            return None
+        return grad.contiguous()
+
     out_path = Path(output_dir)
 
     os.environ["MASTER_ADDR"] = master_addr
@@ -197,6 +203,9 @@ def _worker(
         find_unused_parameters=True,
         gradient_as_bucket_view=False,
     )
+    for _p in model.parameters():
+        if _p.requires_grad:
+            _p.register_hook(_contiguous_grad_hook)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     if rank == 0:
