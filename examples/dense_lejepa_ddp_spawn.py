@@ -182,8 +182,9 @@ def _worker(
     config.model.lejepa.views.corruption.blur = False
     config.model.lejepa.views.corruption.gaussian_noise = True
     config.model.lejepa.views.corruption.random_block_mask = True
+    # Small blocks (ratio×side ~ few px at 128²); many of them → scattered holes, not huge occlusions.
     config.model.lejepa.views.corruption.block_mask_ratio = 0.04
-    config.model.lejepa.views.corruption.block_mask_num_blocks = 4
+    config.model.lejepa.views.corruption.block_mask_num_blocks = 20
 
     # Trades ~2× backbone forward compute for much lower activation memory (OOM mitigation).
     config.model.backbone_gradient_checkpointing = True
