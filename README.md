@@ -217,6 +217,8 @@ model, experiment_cfg = load_dense_lejepa_from_checkpoint(
 model.eval()
 ```
 
+**Notebook:** `examples/inspect_dense_lejepa_checkpoint.ipynb` — browse `dense_lejepa_ddp_outputs/`, load a checkpoint on CPU, run inference on synthetic or custom grayscale images, plot per-hook latent norm maps.
+
 ## Running tests
 
 ```bash
