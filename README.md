@@ -223,6 +223,8 @@ model, experiment_cfg = load_dense_lejepa_from_checkpoint(
 model.eval()
 ```
 
+**Hybrid encoder (conv stem + local attention) + dense LeJEPA:** build `HEAUNetModelConfig` with `name="hybrid_dense_lejepa"`, a non-null `hybrid_encoder` (`HybridConvAttentionEncoderConfig`), and `latent.source="encoder_out"` (only supported hook). Use `HybridDenseLeJEPAModel` or `build_model(config)`. Multi-GPU spawn: `examples/hybrid_dense_lejepa_ddp_spawn.py` → artifacts under `examples/hybrid_dense_lejepa_ddp_outputs/`; load with `load_hybrid_dense_lejepa_from_checkpoint` in that module.
+
 **Notebook:** `examples/inspect_dense_lejepa_checkpoint.ipynb` — browse `dense_lejepa_ddp_outputs/`, load a checkpoint on CPU, run inference on synthetic or custom grayscale images, plot per-hook latent norm maps, and run **linear pixel-decoder + edge-correlation probes** to relate latents to input intensity.
 
 ## Running tests

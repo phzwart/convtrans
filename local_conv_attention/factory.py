@@ -16,6 +16,7 @@ from .config import (
     load_experiment_config,
 )
 from .dense_lejepa import DenseLeJEPAModel
+from .hybrid_dense_lejepa import HybridDenseLeJEPAModel
 from .losses import BottomUpInstanceLoss
 from .swin import SwinUNet
 from .unet import HEAUNet, HEAUNetInstanceModel
@@ -37,6 +38,8 @@ def build_model(config: HEAUNetModelConfig | HEAExperimentConfig | dict[str, Any
         return SwinUNet(config)
     if config.name == "hea_dense_lejepa":
         return DenseLeJEPAModel(config)
+    if config.name == "hybrid_dense_lejepa":
+        return HybridDenseLeJEPAModel(config)
     if config.name in {"hea_unet_instance", "basic_unet_instance"}:
         return HEAUNetInstanceModel(config, postprocess_config=postprocess_config)
     raise ValueError(f"Unsupported model name: {config.name}")

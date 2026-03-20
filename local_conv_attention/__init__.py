@@ -30,9 +30,18 @@ from .config import (
     load_experiment_config,
 )
 from .dense_lejepa import DenseLatentProjector2d, DenseLeJEPAModel
+from .hybrid_dense_lejepa import HYBRID_LATENT_HOOK, HybridDenseLeJEPAModel
 from .explain import HEAExplainer
 from .factory import build_instance_loss, build_model, build_model_from_yaml
 from .hea import HEAFusionBlock2d, HierarchicalElevatorAttention2d, SemanticMemoryBlock2d
+from .hybrid_encoder import (
+    HybridAttentionBlock2d,
+    HybridAttentionBlockConfig,
+    HybridConvAttentionEncoder,
+    HybridConvAttentionEncoderConfig,
+    ResidualStem2d,
+    ResidualStemConfig,
+)
 from .instance_head import BottomUpInstanceHead2d
 from .losses import BottomUpInstanceLoss
 from .masks import flattened_local_attention_mask, local_validity_mask
@@ -77,6 +86,8 @@ __all__ = [
     "DenseLatentProjector2d",
     "DenseLeJEPAObjectiveConfig",
     "DenseLeJEPAModel",
+    "HYBRID_LATENT_HOOK",
+    "HybridDenseLeJEPAModel",
     "DenseSIGRegConfig",
     "DenseViewConfig",
     "DenseViewCorruptionConfig",
@@ -103,6 +114,12 @@ __all__ = [
     "LocalAttention2d",
     "LocalSelfAttention2d",
     "LocalTransformerBlock2d",
+    "HybridAttentionBlock2d",
+    "HybridAttentionBlockConfig",
+    "HybridConvAttentionEncoder",
+    "HybridConvAttentionEncoderConfig",
+    "ResidualStem2d",
+    "ResidualStemConfig",
     "MultiHeadLocalAttention2d",
     "NeighborhoodShift2d",
     "ReferenceLocalAttention2d",

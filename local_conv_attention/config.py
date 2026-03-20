@@ -9,6 +9,8 @@ from typing import Any, Literal, TypeVar, Union, get_args, get_origin, get_type_
 
 import yaml
 
+from .hybrid_encoder import HybridConvAttentionEncoderConfig
+
 
 T = TypeVar("T")
 
@@ -19,6 +21,7 @@ ModelName = Literal[
     "hea_unet_instance",
     "basic_unet_instance",
     "hea_dense_lejepa",
+    "hybrid_dense_lejepa",
 ]
 
 
@@ -95,7 +98,7 @@ class TrunkConfig:
 
 
 def _validate_latent_hook_name(name: str) -> None:
-    if name in ("top", "bottleneck"):
+    if name in ("top", "bottleneck", "encoder_out"):
         return
     if name.startswith("encoder_"):
         int(name.split("_", maxsplit=1)[1])
@@ -144,6 +147,10 @@ def _validate_latent_hooks_for_pyramid(hooks: list[str], num_scales: int) -> Non
     max_decoder = num_scales - 2
     for name in hooks:
         _validate_latent_hook_name(name)
+        if name == "encoder_out":
+            raise ValueError(
+                "latent hook 'encoder_out' is only valid for hybrid_dense_lejepa, not HEA pyramid models."
+            )
         if name.startswith("encoder_"):
             k = int(name.split("_", maxsplit=1)[1])
             if k < 0 or k > max_encoder:
@@ -464,12 +471,14 @@ class HEAUNetModelConfig:
     instance_head: InstanceHeadConfig = field(default_factory=InstanceHeadConfig)
     latent: DenseLatentConfig = field(default_factory=DenseLatentConfig)
     lejepa: DenseLeJEPAObjectiveConfig = field(default_factory=DenseLeJEPAObjectiveConfig)
+    #: Used only when ``name == "hybrid_dense_lejepa"`` (conv + local-attention encoder SSL).
+    hybrid_encoder: HybridConvAttentionEncoderConfig | None = None
 
     def is_instance_model(self) -> bool:
         return self.name in {"hea_unet_instance", "basic_unet_instance"}
 
     def is_dense_ssl_model(self) -> bool:
-        return self.name == "hea_dense_lejepa"
+        return self.name in {"hea_dense_lejepa", "hybrid_dense_lejepa"}
 
     def trunk_name(self) -> Literal["hea_unet", "basic_unet", "swin_unet"]:
         for trunk_like in (self.backbone, self.trunk):
@@ -477,7 +486,7 @@ class HEAUNetModelConfig:
                 return "hea_unet"
             if trunk_like.type is not None:
                 return trunk_like.type
-        if self.name == "hea_dense_lejepa":
+        if self.name in {"hea_dense_lejepa", "hybrid_dense_lejepa"}:
             return "hea_unet"
         if self.name in {"hea_unet", "hea_unet_instance"}:
             return "hea_unet"
@@ -510,6 +519,30 @@ class HEAUNetModelConfig:
                 self.hea.enabled_decoder_stages = list(self.hea.enabled_decoder_stages)
 
     def validate(self) -> None:
+        if self.name == "hybrid_dense_lejepa":
+            if self.hybrid_encoder is None:
+                raise ValueError("hybrid_dense_lejepa requires model.hybrid_encoder to be set.")
+            self.hybrid_encoder.validate()
+            if self.hybrid_encoder.output_mode != "feature_map":
+                raise ValueError(
+                    'hybrid_dense_lejepa requires hybrid_encoder.output_mode="feature_map" '
+                    f"(got {self.hybrid_encoder.output_mode!r})."
+                )
+            if self.hybrid_encoder.stem.in_channels != self.in_channels:
+                raise ValueError(
+                    f"hybrid_encoder.stem.in_channels ({self.hybrid_encoder.stem.in_channels}) "
+                    f"must match model.in_channels ({self.in_channels})."
+                )
+            self.latent.validate()
+            for hook in self.latent.resolved_sources():
+                if hook != "encoder_out":
+                    raise ValueError(
+                        "hybrid_dense_lejepa latent hooks must be 'encoder_out' only; "
+                        f"got {hook!r}."
+                    )
+            self.lejepa.validate()
+            return
+
         self._apply_trunk_overrides()
         self.attention.validate()
         num_scales = len(self.channel_multipliers)
@@ -544,7 +577,7 @@ class HEAUNetModelConfig:
         trunk_name = self.trunk_name()
         if trunk_name == "swin_unet" and self.is_instance_model():
             raise ValueError("Instance models currently support only HEA or basic U-Net trunks.")
-        if self.is_dense_ssl_model() and trunk_name != "hea_unet":
+        if self.is_dense_ssl_model() and self.name == "hea_dense_lejepa" and trunk_name != "hea_unet":
             raise ValueError("hea_dense_lejepa currently supports only the HEA backbone.")
         if trunk_name != "hea_unet":
             return
