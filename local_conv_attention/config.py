@@ -112,6 +112,20 @@ def default_all_latent_hooks(num_scales: int) -> list[str]:
     return hooks
 
 
+def default_decoder_latent_hooks(num_scales: int) -> list[str]:
+    """Decoder-side hooks only: ``bottleneck``, all ``decoder_*``, ``top``.
+
+    These hooks carry cross-scale context from semantic memories and HEA fusion
+    (unlike encoder hooks which are pure conv features).
+    """
+    if num_scales < 1:
+        raise ValueError("num_scales must be positive.")
+    hooks: list[str] = ["bottleneck"]
+    hooks.extend(f"decoder_{k}" for k in range(max(0, num_scales - 1)))
+    hooks.append("top")
+    return hooks
+
+
 def _validate_latent_hooks_for_pyramid(hooks: list[str], num_scales: int) -> None:
     """``num_scales`` = len(encoder stages); decoder stages are ``0 .. num_scales-2``."""
     if num_scales < 1:
@@ -148,6 +162,9 @@ class DenseLatentConfig:
     step_mode: Literal["joint", "rotate"] = "joint"
     latent_dim: int = 128
     projector_depth: int = 1
+    #: Spatial kernel size for projector conv layers.  ``1`` = pointwise (default);
+    #: ``3`` adds spatial smoothing which helps decoder/top hooks that carry upsample artifacts.
+    projector_kernel_size: int = 1
     normalize_latents: bool = False
 
     def resolved_sources(self) -> list[str]:
@@ -168,6 +185,8 @@ class DenseLatentConfig:
             raise ValueError("latent.latent_dim must be positive.")
         if self.projector_depth < 1:
             raise ValueError("latent.projector_depth must be at least 1.")
+        if self.projector_kernel_size not in (1, 3, 5, 7):
+            raise ValueError("latent.projector_kernel_size must be 1, 3, 5, or 7.")
         if not self.resolved_sources():
             raise ValueError("latent.sources (or latent.source) must list at least one hook.")
         for name in self.resolved_sources():

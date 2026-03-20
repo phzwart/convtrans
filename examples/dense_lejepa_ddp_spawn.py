@@ -87,7 +87,7 @@ def _worker(
     from local_conv_attention import (
         DenseLeJEPAModel,
         DiscSquareDataset,
-        default_all_latent_hooks,
+        default_decoder_latent_hooks,
         load_experiment_config,
     )
 
@@ -146,23 +146,27 @@ def _worker(
     config.model.base_channels = 16
     config.model.channel_multipliers = [1, 2, 4, 8]
     config.model.encoder_depths = [1, 1, 1, 1]
-    config.model.decoder_depths = [1, 1, 1]
+    config.model.decoder_depths = [2, 2, 2]
     config.model.attention.heads = 4
     config.model.attention.head_dim = 16
     config.model.attention.operator_backend = "optimized"
 
-    # One dense projector per pyramid hook: all encoder_* scales, bottleneck, decoder_*, top.
-    config.model.latent.sources = default_all_latent_hooks(len(config.model.channel_multipliers))
-    # ``rotate``: one hook per batch (``rotate_latent_index=global_step`` below); ``joint``: all hooks every batch.
+    # Concat skips: decoder receives encoder features (not just upsample shape).
+    config.model.use_raw_skips = True
+
+    # Decoder-side hooks only: bottleneck, decoder_*, top — these carry HEA / cross-scale context.
+    config.model.latent.sources = default_decoder_latent_hooks(len(config.model.channel_multipliers))
     config.model.latent.step_mode = "rotate"
     config.model.latent.latent_dim = 32
-    config.model.latent.projector_depth = 1
+    config.model.latent.projector_depth = 2
+    config.model.latent.projector_kernel_size = 3
     config.model.latent.normalize_latents = False
 
-    # HEA attention fusion targets (not the same as latent.sources); backbone + all latent heads still exist.
-    config.model.hea.enabled_decoder_stages = [0]
+    # HEA fusion on all decoder stages (full cross-scale context in every decoder feature).
+    config.model.hea.enabled_decoder_stages = [0, 1, 2]
     config.model.semantic_memory.window_sizes = [7, 7, 7]
     config.model.hea.per_scale_window_sizes = [7, 7, 7]
+    config.model.hea.per_scale_dilations = [1, 1, 1]
 
     config.model.lejepa.num_views = 4
     # Lower peak VRAM vs fusing all views through the backbone in one batch.

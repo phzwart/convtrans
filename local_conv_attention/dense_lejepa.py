@@ -49,18 +49,20 @@ class DenseLatentProjector2d(nn.Module):
         latent_dim: int,
         *,
         depth: int = 1,
+        kernel_size: int = 1,
         activation: str = "gelu",
         normalize_latents: bool = False,
     ) -> None:
         super().__init__()
         if depth < 1:
             raise ValueError("DenseLatentProjector2d depth must be at least 1.")
+        padding = kernel_size // 2
         layers: list[nn.Module] = []
         current_channels = in_channels
         for _ in range(depth - 1):
-            layers.append(nn.Conv2d(current_channels, current_channels, kernel_size=1))
+            layers.append(nn.Conv2d(current_channels, current_channels, kernel_size=kernel_size, padding=padding))
             layers.append(make_activation(activation))
-        layers.append(nn.Conv2d(current_channels, latent_dim, kernel_size=1))
+        layers.append(nn.Conv2d(current_channels, latent_dim, kernel_size=kernel_size, padding=padding))
         self.proj = nn.Sequential(*layers)
         self.normalize_latents = normalize_latents
 
@@ -87,6 +89,7 @@ class DenseLeJEPAModel(nn.Module):
                     _in_channels_for_latent_source(self.backbone.channels, s),
                     config.latent.latent_dim,
                     depth=config.latent.projector_depth,
+                    kernel_size=config.latent.projector_kernel_size,
                     activation=config.act,
                     normalize_latents=config.latent.normalize_latents,
                 )

@@ -106,3 +106,46 @@ def test_dense_lejepa_sequential_view_forward_runs() -> None:
     assert torch.isfinite(out["loss"])
     out["loss"].backward()
     assert model.backbone.stem.proj.conv.weight.grad is not None
+
+
+def test_dense_lejepa_decoder_hooks_with_raw_skips_and_3x3_projector() -> None:
+    """Decoder-only hooks + concat skips + 3x3 projector — the production config."""
+    from local_conv_attention import default_decoder_latent_hooks
+
+    cfg = HEAUNetModelConfig(
+        name="hea_dense_lejepa",
+        in_channels=1,
+        base_channels=4,
+        channel_multipliers=[1, 2, 4],
+        encoder_depths=[1, 1, 1],
+        decoder_depths=[2, 2],
+        swin_stage_heads=[2, 4, 8],
+        use_raw_skips=True,
+    )
+    cfg.attention.heads = 2
+    cfg.attention.head_dim = 4
+    cfg.hea.enabled_decoder_stages = [0, 1]
+    cfg.semantic_memory.enabled_scales = [1, 2]
+    cfg.semantic_memory.block_depths = [1, 1]
+    cfg.semantic_memory.window_sizes = [3, 3]
+    cfg.semantic_memory.dilations = [1, 1]
+    cfg.hea.per_scale_window_sizes = [3, 3]
+    cfg.hea.per_scale_dilations = [1, 1]
+    cfg.latent.sources = default_decoder_latent_hooks(3)
+    cfg.latent.latent_dim = 8
+    cfg.latent.projector_depth = 2
+    cfg.latent.projector_kernel_size = 3
+    cfg.lejepa.num_views = 2
+    cfg.lejepa.sigreg.num_slices = 8
+    cfg.lejepa.sigreg.num_knots = 5
+    cfg.validate()
+
+    torch.manual_seed(42)
+    model = DenseLeJEPAModel(cfg)
+    x = torch.randn(2, 1, 32, 32)
+    out = model(x)
+    expected_hooks = {"bottleneck", "decoder_0", "decoder_1", "top"}
+    assert set(out["latents_by_source"].keys()) == expected_hooks
+    assert torch.isfinite(out["loss"])
+    out["loss"].backward()
+    assert model.backbone.stem.proj.conv.weight.grad is not None

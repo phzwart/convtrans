@@ -25,6 +25,7 @@ from .config import (
     InstancePostprocessConfig,
     InstanceTargetConfig,
     default_all_latent_hooks,
+    default_decoder_latent_hooks,
     experiment_config_from_dict,
     load_experiment_config,
 )
@@ -112,6 +113,7 @@ __all__ = [
     "build_offset_target",
     "decode_instances",
     "default_all_latent_hooks",
+    "default_decoder_latent_hooks",
     "experiment_config_from_dict",
     "flattened_local_attention_from_qkv",
     "flattened_local_attention_mask",
