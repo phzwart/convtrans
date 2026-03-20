@@ -31,6 +31,15 @@ class HEAAttentionConfig:
     head_dim: int = 16
     out_bias: bool = True
     qkv_bias: bool = True
+    #: Neighborhoods outside the map: ``zeros`` (masked, previous default) or
+    #: ``reflect`` (mirror edges / replicate on tiny maps; all neighbors attend).
+    local_attention_boundary_pad: Literal["zeros", "reflect"] = "zeros"
+
+    def validate(self) -> None:
+        if self.local_attention_boundary_pad not in ("zeros", "reflect"):
+            raise ValueError(
+                'attention.local_attention_boundary_pad must be "zeros" or "reflect".'
+            )
 
 
 @dataclass
@@ -82,6 +91,7 @@ class TrunkConfig:
     elevator_mode: Literal["direct", "progressive"] | None = None
     fusion_mode: Literal["per_scale", "joint_softmax"] | None = None
     operator_backend: Literal["optimized", "shift"] | None = None
+    local_attention_boundary_pad: Literal["zeros", "reflect"] | None = None
 
 
 def _validate_latent_hook_name(name: str) -> None:
@@ -470,6 +480,8 @@ class HEAUNetModelConfig:
         for trunk_like in (self.trunk, self.backbone):
             if trunk_like.operator_backend is not None:
                 self.attention.operator_backend = trunk_like.operator_backend
+            if trunk_like.local_attention_boundary_pad is not None:
+                self.attention.local_attention_boundary_pad = trunk_like.local_attention_boundary_pad
             if trunk_like.fusion_mode is not None:
                 self.attention.fusion_mode = trunk_like.fusion_mode
             if trunk_like.elevator_mode is not None:
@@ -483,6 +495,7 @@ class HEAUNetModelConfig:
 
     def validate(self) -> None:
         self._apply_trunk_overrides()
+        self.attention.validate()
         num_scales = len(self.channel_multipliers)
         if len(self.encoder_depths) != num_scales:
             raise ValueError(

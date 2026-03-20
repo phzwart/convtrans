@@ -11,7 +11,7 @@ from torch import Tensor, nn
 from .attention import AttentionImplementation
 from .block import LocalTransformerBlock2d
 from .encoder import ActKind, NormKind, make_activation, make_norm2d
-from .ops import ConvShiftBank2d, NeighborhoodShift2d
+from .ops import BoundaryPadMode, ConvShiftBank2d, NeighborhoodShift2d
 from .utils import merge_heads, reshape_heads, scaled_dot_product_scale
 
 
@@ -112,6 +112,7 @@ class _CrossScaleNeighborhoodExtractor(nn.Module):
         dilation: int,
         *,
         implementation: AttentionImplementation,
+        boundary_pad: BoundaryPadMode = "zeros",
     ) -> None:
         super().__init__()
         if implementation not in {"optimized", "shift"}:
@@ -121,9 +122,17 @@ class _CrossScaleNeighborhoodExtractor(nn.Module):
         self.num_heads = num_heads
         self.implementation = implementation
         if implementation == "optimized":
-            self.shift = ConvShiftBank2d(window_size=window_size, dilation=dilation)
+            self.shift = ConvShiftBank2d(
+                window_size=window_size,
+                dilation=dilation,
+                boundary_pad=boundary_pad,
+            )
         else:
-            self.shift = NeighborhoodShift2d(window_size=window_size, dilation=dilation)
+            self.shift = NeighborhoodShift2d(
+                window_size=window_size,
+                dilation=dilation,
+                boundary_pad=boundary_pad,
+            )
 
     def forward(
         self,
@@ -186,6 +195,7 @@ class HierarchicalElevatorAttention2d(nn.Module):
         window_sizes: Sequence[int],
         dilations: Sequence[int],
         implementation: AttentionImplementation = "optimized",
+        boundary_pad: BoundaryPadMode = "zeros",
         fusion_mode: CrossScaleFusionMode = "per_scale",
         qkv_bias: bool = True,
         joint_scale_projection: bool = True,
@@ -225,6 +235,7 @@ class HierarchicalElevatorAttention2d(nn.Module):
                     window_size=window_size,
                     dilation=dilation,
                     implementation=implementation,
+                    boundary_pad=boundary_pad,
                 )
                 for window_size, dilation in zip(window_sizes, dilations)
             ]
@@ -442,6 +453,7 @@ class SemanticMemoryBlock2d(nn.Module):
         window_size: int,
         dilation: int,
         implementation: AttentionImplementation = "optimized",
+        boundary_pad: BoundaryPadMode = "zeros",
         use_local_transformer_block: bool = True,
         norm: NormKind = "batchnorm",
         act: ActKind = "gelu",
@@ -457,6 +469,7 @@ class SemanticMemoryBlock2d(nn.Module):
                         window_size=window_size,
                         dilation=dilation,
                         implementation=implementation,
+                        boundary_pad=boundary_pad,
                     )
                 )
             else:
@@ -487,6 +500,7 @@ class HEAFusionBlock2d(nn.Module):
         window_sizes: Sequence[int],
         dilations: Sequence[int],
         implementation: AttentionImplementation = "optimized",
+        boundary_pad: BoundaryPadMode = "zeros",
         fusion_mode: CrossScaleFusionMode = "per_scale",
         residual_fusion: ResidualFusionMode = "gated_residual",
         qkv_bias: bool = True,
@@ -504,6 +518,7 @@ class HEAFusionBlock2d(nn.Module):
             window_sizes=window_sizes,
             dilations=dilations,
             implementation=implementation,
+            boundary_pad=boundary_pad,
             fusion_mode=fusion_mode,
             qkv_bias=qkv_bias,
             joint_scale_projection=joint_scale_projection,

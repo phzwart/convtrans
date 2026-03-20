@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from torch import Tensor, nn
 
-from .attention import AttentionImplementation, LocalSelfAttention2d
+from .attention import AttentionImplementation, BoundaryPadMode, LocalSelfAttention2d
 from .reference import ReferenceLocalSelfAttention2d
 from .utils import ChannelLayerNorm2d, MLP2d
 
@@ -25,6 +25,7 @@ class LocalTransformerBlock2d(nn.Module):
         dilation: int = 1,
         norm_eps: float = 1e-5,
         implementation: AttentionImplementation = "optimized",
+        boundary_pad: BoundaryPadMode = "zeros",
     ) -> None:
         super().__init__()
         hidden_dim = int(dim * mlp_ratio)
@@ -37,6 +38,7 @@ class LocalTransformerBlock2d(nn.Module):
             out_bias=out_bias,
             dilation=dilation,
             implementation=implementation,
+            boundary_pad=boundary_pad,
         )
         self.norm2 = ChannelLayerNorm2d(dim, eps=norm_eps)
         self.mlp = MLP2d(dim=dim, hidden_dim=hidden_dim, bias=mlp_bias)

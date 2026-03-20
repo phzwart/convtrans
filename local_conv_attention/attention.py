@@ -7,7 +7,7 @@ from typing import Literal, Tuple, Type
 import torch
 from torch import Tensor, nn
 
-from .ops import ConvShiftBank2d, NeighborhoodShift2d
+from .ops import BoundaryPadMode, ConvShiftBank2d, NeighborhoodShift2d
 from .reference import FlattenedMaskedLocalAttention2d, ReferenceLocalAttention2d
 from .utils import merge_heads, reshape_heads, scaled_dot_product_scale
 
@@ -48,12 +48,17 @@ class ShiftLocalAttention2d(nn.Module):
         window_size: int,
         *,
         dilation: int = 1,
+        boundary_pad: BoundaryPadMode = "zeros",
     ) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.window_size = window_size
         self.dilation = dilation
-        self.shift = NeighborhoodShift2d(window_size=window_size, dilation=dilation)
+        self.shift = NeighborhoodShift2d(
+            window_size=window_size,
+            dilation=dilation,
+            boundary_pad=boundary_pad,
+        )
 
     def forward(
         self,
@@ -87,10 +92,16 @@ class ShiftLocalAttention2d(nn.Module):
         num_heads: int,
         window_size: int,
         dilation: int = 1,
+        boundary_pad: BoundaryPadMode = "zeros",
         return_attention: bool = False,
     ) -> Tensor | Tuple[Tensor, Tensor]:
         """Convenience wrapper for one-off local attention calls."""
-        module = cls(num_heads=num_heads, window_size=window_size, dilation=dilation)
+        module = cls(
+            num_heads=num_heads,
+            window_size=window_size,
+            dilation=dilation,
+            boundary_pad=boundary_pad,
+        )
         return module(q, k, v, return_attention=return_attention)
 
 
@@ -103,12 +114,17 @@ class ConvLocalAttention2d(nn.Module):
         window_size: int,
         *,
         dilation: int = 1,
+        boundary_pad: BoundaryPadMode = "zeros",
     ) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.window_size = window_size
         self.dilation = dilation
-        self.shift = ConvShiftBank2d(window_size=window_size, dilation=dilation)
+        self.shift = ConvShiftBank2d(
+            window_size=window_size,
+            dilation=dilation,
+            boundary_pad=boundary_pad,
+        )
 
     def forward(
         self,
@@ -159,10 +175,16 @@ class ConvLocalAttention2d(nn.Module):
         num_heads: int,
         window_size: int,
         dilation: int = 1,
+        boundary_pad: BoundaryPadMode = "zeros",
         return_attention: bool = False,
     ) -> Tensor | Tuple[Tensor, Tensor]:
         """Convenience wrapper for one-off local attention calls."""
-        module = cls(num_heads=num_heads, window_size=window_size, dilation=dilation)
+        module = cls(
+            num_heads=num_heads,
+            window_size=window_size,
+            dilation=dilation,
+            boundary_pad=boundary_pad,
+        )
         return module(q, k, v, return_attention=return_attention)
 
 
@@ -212,20 +234,29 @@ class LocalSelfAttention2d(nn.Module):
         out_bias: bool = True,
         dilation: int = 1,
         implementation: AttentionImplementation = "optimized",
+        boundary_pad: BoundaryPadMode = "zeros",
     ) -> None:
         super().__init__()
         if dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by num_heads ({num_heads}).")
+        if implementation == "flattened" and boundary_pad != "zeros":
+            raise ValueError(
+                'local attention with implementation="flattened" only supports boundary_pad="zeros".'
+            )
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.implementation = implementation
         self.qkv = nn.Conv2d(dim, 3 * dim, kernel_size=1, bias=qkv_bias)
-        self.attention = make_attention_impl(implementation)(
-            num_heads=num_heads,
-            window_size=window_size,
-            dilation=dilation,
-        )
+        attn_cls = make_attention_impl(implementation)
+        attn_kwargs: dict[str, int | BoundaryPadMode] = {
+            "num_heads": num_heads,
+            "window_size": window_size,
+            "dilation": dilation,
+        }
+        if implementation != "flattened":
+            attn_kwargs["boundary_pad"] = boundary_pad
+        self.attention = attn_cls(**attn_kwargs)
         self.out_proj = nn.Conv2d(dim, dim, kernel_size=1, bias=out_bias)
 
     def forward(self, x: Tensor, *, return_attention: bool = False) -> Tensor | Tuple[Tensor, Tensor]:
@@ -247,12 +278,20 @@ def local_attention_from_qkv(
     dilation: int = 1,
     return_attention: bool = False,
     implementation: AttentionImplementation = "optimized",
+    boundary_pad: BoundaryPadMode = "zeros",
 ) -> Tensor | Tuple[Tensor, Tensor]:
     """Functional-style entry point for exact local attention."""
+    if implementation == "flattened" and boundary_pad != "zeros":
+        raise ValueError(
+            'local_attention_from_qkv with implementation="flattened" only supports boundary_pad="zeros".'
+        )
     attention_cls = make_attention_impl(implementation)
-    module = attention_cls(
-        num_heads=num_heads,
-        window_size=window_size,
-        dilation=dilation,
-    )
+    kwargs: dict[str, int | BoundaryPadMode] = {
+        "num_heads": num_heads,
+        "window_size": window_size,
+        "dilation": dilation,
+    }
+    if implementation != "flattened":
+        kwargs["boundary_pad"] = boundary_pad
+    module = attention_cls(**kwargs)
     return module(q, k, v, return_attention=return_attention)

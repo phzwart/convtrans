@@ -48,3 +48,30 @@ def test_window_size_one_is_identity_shift() -> None:
     shifted, mask = NeighborhoodShift2d(window_size=1)(x, return_mask=True)
     torch.testing.assert_close(shifted[:, :, 0], x)
     assert mask.all()
+
+
+def test_reflect_padding_corner_neighbor_not_zero() -> None:
+    """Reflect/replicate fill: top-left stencil includes mirrored edge, not zeros."""
+    x = torch.arange(1, 10, dtype=torch.float64).view(1, 1, 1, 3, 3)
+    shifted, mask = NeighborhoodShift2d(window_size=3, boundary_pad="reflect")(x, return_mask=True)
+    assert mask.all()
+    # With reflect, offset (-1,-1) at corner should see reflected content, not 0.
+    assert shifted[0, 0, 0, 0, 0, 0].item() != 0.0
+
+
+def test_conv_shift_bank_matches_neighborhood_shift_reflect() -> None:
+    from local_conv_attention.ops import ConvShiftBank2d
+
+    torch.manual_seed(0)
+    x4 = torch.randn(2, 8, 11, 13)
+    # NeighborhoodShift2d uses [B, heads, dim, H, W]; use heads=1 for same layout as NCHW.
+    x5 = x4.unsqueeze(1)
+    ws, dil = 5, 2
+    a, ma = ConvShiftBank2d(window_size=ws, dilation=dil, boundary_pad="reflect")(x4, return_mask=True)
+    b, mb = NeighborhoodShift2d(window_size=ws, dilation=dil, boundary_pad="reflect")(x5, return_mask=True)
+    # b is [B, heads, K, dim, H, W] — merge heads*dim like NCHW for comparison.
+    b_nchw = b.permute(0, 1, 3, 2, 4, 5).reshape(
+        b.size(0), b.size(1) * b.size(3), b.size(2), b.size(4), b.size(5)
+    )
+    torch.testing.assert_close(a, b_nchw)
+    torch.testing.assert_close(ma, mb.squeeze(3))

@@ -65,9 +65,11 @@ Q_center:    [B, heads, 1,   d_head, H, W]
 1. extract aligned `K` and `V` neighbors with the fixed shift bank
 2. compute local dot products `Q · K`
 3. scale by `1 / sqrt(d_head)`
-4. mask out-of-bounds offsets
+4. mask out-of-bounds offsets (skipped when using reflected boundaries; see below)
 5. softmax over the `M*M` offset dimension only
 6. take the weighted sum over aligned `V`
+
+**Boundary padding:** The default is zero padding outside the feature map, with invalid stencil positions masked before softmax. You can use **reflection** at the edges instead: set `attention.local_attention_boundary_pad: reflect` in YAML (or `HEAAttentionConfig.local_attention_boundary_pad` / `trunk.local_attention_boundary_pad`). Neighbors are then read from a mirrored map (PyTorch `reflect`; on tiny H×W where reflect is illegal, `replicate` is used). The flattened reference backend (`implementation: flattened`) only supports `zeros`.
 
 This optimized path is meant to take advantage of backend convolution kernels on CPU, CUDA, and especially MPS/CUDA-capable hardware.
 
@@ -204,6 +206,8 @@ print(out["latents"].shape, out["inv_loss"], out["sigreg_loss"], out["loss"])
 - `checkpoint_epoch_####.pt` — weights, optimizer, scalar history, and embedded `config_dict` **every epoch**
 - `checkpoint_latest.pt` — copy of the last epoch (stable path for notebooks)
 - `scalars.json` — per-epoch losses
+
+The default `DiscSquareDataset` applies a **uniform random rotation** in `[0°, 360°)` per sample (via `rotate_image_2d`). Pass `random_rotation=False` for axis-aligned synthetic shapes, or `rotation_range_deg=(a, b)` / `generator=` to control the distribution or seed.
 
 Load and run on new images:
 

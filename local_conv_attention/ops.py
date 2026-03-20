@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Literal, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -10,6 +10,39 @@ from torch import Tensor, nn
 
 from .masks import local_validity_mask
 from .utils import make_offsets, window_radius
+
+BoundaryPadMode = Literal["zeros", "reflect"]
+
+
+def pad_spatial_hw(x: Tensor, pad: int, mode: BoundaryPadMode) -> Tensor:
+    """Pad the last two dims (H, W) of ``x`` symmetrically by ``pad``.
+
+    ``zeros`` matches prior implicit conv/unfold zero padding.  ``reflect`` mirrors
+    interior values at the boundary (PyTorch ``mode='reflect'``).  If ``reflect``
+    is invalid because ``pad`` is not strictly smaller than H and W, falls back to
+    ``replicate`` (edge-clamp) so tiny feature maps still run.
+
+    For 5D tensors ``[B, Hg, C, H, W]`` (e.g. headed layout), reflect/replicate
+    use a 6-tuple so only ``H`` and ``W`` are padded (PyTorch requires this for
+    non-constant 5D padding).
+    """
+    if pad <= 0:
+        return x
+    *_, height, width = x.shape
+    spec4 = (pad, pad, pad, pad)  # W then H for 4D NCHW
+    if mode == "zeros":
+        return F.pad(x, spec4)
+
+    if x.dim() == 4:
+        spec = spec4
+    elif x.dim() == 5:
+        spec = (pad, pad, pad, pad, 0, 0)  # W, H, then no pad on channel-like dim
+    else:
+        raise ValueError(f"pad_spatial_hw expects 4D or 5D input, got {x.dim()}D.")
+
+    if pad < height and pad < width:
+        return F.pad(x, spec, mode="reflect")
+    return F.pad(x, spec, mode="replicate")
 
 
 class NeighborhoodShift2d(nn.Module):
@@ -19,10 +52,17 @@ class NeighborhoodShift2d(nn.Module):
     local MxM stencil is aligned with the center position.
     """
 
-    def __init__(self, window_size: int, dilation: int = 1) -> None:
+    def __init__(
+        self,
+        window_size: int,
+        dilation: int = 1,
+        *,
+        boundary_pad: BoundaryPadMode = "zeros",
+    ) -> None:
         super().__init__()
         self.window_size = window_size
         self.dilation = dilation
+        self.boundary_pad: BoundaryPadMode = boundary_pad
         self.offsets = make_offsets(window_size, dilation=dilation)
         self.padding = window_radius(window_size, dilation=dilation)
 
@@ -39,7 +79,7 @@ class NeighborhoodShift2d(nn.Module):
             )
 
         _, _, _, height, width = x.shape
-        padded = F.pad(x, (self.padding, self.padding, self.padding, self.padding))
+        padded = pad_spatial_hw(x, self.padding, self.boundary_pad)
 
         neighbors = []
         for dy, dx in self.offsets:
@@ -51,13 +91,20 @@ class NeighborhoodShift2d(nn.Module):
         if not return_mask:
             return shifted
 
-        mask = local_validity_mask(
-            height,
-            width,
-            self.window_size,
-            dilation=self.dilation,
-            device=x.device,
-        )
+        if self.boundary_pad == "zeros":
+            mask = local_validity_mask(
+                height,
+                width,
+                self.window_size,
+                dilation=self.dilation,
+                device=x.device,
+            )
+        else:
+            mask = torch.ones(
+                (len(self.offsets), height, width),
+                dtype=torch.bool,
+                device=x.device,
+            )
         return shifted, mask.view(1, 1, len(self.offsets), 1, height, width)
 
 
@@ -76,10 +123,17 @@ class ConvShiftBank2d(nn.Module):
     backend's optimized convolution kernels on CPU, CUDA, or MPS.
     """
 
-    def __init__(self, window_size: int, dilation: int = 1) -> None:
+    def __init__(
+        self,
+        window_size: int,
+        dilation: int = 1,
+        *,
+        boundary_pad: BoundaryPadMode = "zeros",
+    ) -> None:
         super().__init__()
         self.window_size = window_size
         self.dilation = dilation
+        self.boundary_pad: BoundaryPadMode = boundary_pad
         self.offsets = make_offsets(window_size, dilation=dilation)
         self.padding = window_radius(window_size, dilation=dilation)
         self.register_buffer(
@@ -88,7 +142,7 @@ class ConvShiftBank2d(nn.Module):
             persistent=False,
         )
         self._weight_cache: Dict[tuple[int, torch.device, torch.dtype], Tensor] = {}
-        self._mask_cache: Dict[tuple[int, int, torch.device], Tensor] = {}
+        self._mask_cache: Dict[tuple[str, int, int, torch.device], Tensor] = {}
 
     @staticmethod
     def _build_base_kernels(window_size: int) -> Tensor:
@@ -125,12 +179,18 @@ class ConvShiftBank2d(nn.Module):
         weight = self._expanded_weight(channels, x.device, x.dtype)
         if x.device.type in {"cuda", "mps"}:
             x = x.contiguous(memory_format=torch.channels_last)
+        if self.boundary_pad == "zeros":
+            x_in = x
+            conv_pad = self.padding
+        else:
+            x_in = pad_spatial_hw(x, self.padding, self.boundary_pad)
+            conv_pad = 0
         shifted = F.conv2d(
-            x,
+            x_in,
             weight,
             bias=None,
             stride=1,
-            padding=self.padding,
+            padding=conv_pad,
             dilation=self.dilation,
             groups=channels,
         )
@@ -140,15 +200,23 @@ class ConvShiftBank2d(nn.Module):
         if not return_mask:
             return shifted
 
-        mask_key = (height, width, x.device)
+        mask_key = (self.boundary_pad, height, width, x.device)
         mask = self._mask_cache.get(mask_key)
         if mask is None:
-            mask = local_validity_mask(
-                height,
-                width,
-                self.window_size,
-                dilation=self.dilation,
-                device=x.device,
-            ).view(1, 1, len(self.offsets), height, width)
+            if self.boundary_pad == "zeros":
+                mask_tensor = local_validity_mask(
+                    height,
+                    width,
+                    self.window_size,
+                    dilation=self.dilation,
+                    device=x.device,
+                )
+            else:
+                mask_tensor = torch.ones(
+                    (len(self.offsets), height, width),
+                    dtype=torch.bool,
+                    device=x.device,
+                )
+            mask = mask_tensor.view(1, 1, len(self.offsets), height, width)
             self._mask_cache[mask_key] = mask
         return shifted, mask

@@ -36,7 +36,7 @@ from .hea import HEAFusionBlock2d, HierarchicalElevatorAttention2d, SemanticMemo
 from .instance_head import BottomUpInstanceHead2d
 from .losses import BottomUpInstanceLoss
 from .masks import flattened_local_attention_mask, local_validity_mask
-from .ops import ConvShiftBank2d, NeighborhoodShift2d, ShiftBank2d
+from .ops import BoundaryPadMode, ConvShiftBank2d, NeighborhoodShift2d, ShiftBank2d, pad_spatial_hw
 from .postprocess import decode_instances
 from .reference import (
     FlattenedMaskedLocalAttention2d,
@@ -45,7 +45,13 @@ from .reference import (
     flattened_local_attention_from_qkv,
 )
 from .sigreg import SIGRegLoss
-from .synthetic_data import DiscSquareDataset, DiscSquareType, generate_disc_square_image, make_disc_square_types
+from .synthetic_data import (
+    DiscSquareDataset,
+    DiscSquareType,
+    generate_disc_square_image,
+    make_disc_square_types,
+    rotate_image_2d,
+)
 from .swin import SwinUNet
 from .targets import (
     build_center_heatmap_target,
@@ -78,6 +84,7 @@ __all__ = [
     "ConvLocalAttention2d",
     "ConvShiftBank2d",
     "HEABackbone",
+    "BoundaryPadMode",
     "BottomUpInstanceHead2d",
     "BottomUpInstanceLoss",
     "BottomUpInstanceLossConfig",
@@ -118,8 +125,10 @@ __all__ = [
     "flattened_local_attention_from_qkv",
     "flattened_local_attention_mask",
     "generate_disc_square_image",
+    "rotate_image_2d",
     "load_experiment_config",
     "local_attention_from_qkv",
+    "pad_spatial_hw",
     "local_validity_mask",
     "make_disc_square_types",
     "combine_upsampled_heatmaps",

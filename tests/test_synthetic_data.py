@@ -32,8 +32,29 @@ def test_near_square_is_closer_to_disc_edge_than_far_square() -> None:
 
 
 def test_disc_square_dataset_repeats_types() -> None:
-    dataset = DiscSquareDataset(repeats_per_type=2)
+    dataset = DiscSquareDataset(repeats_per_type=2, random_rotation=False)
     assert len(dataset) == 16
     sample = dataset[0]
     assert sample["image"].shape == (1, 128, 128)
     assert sample["square_size"] in {8, 14}
+    assert sample["rotation_deg"] == 0.0
+
+
+def test_rotate_image_2d_zero_degrees_is_unchanged() -> None:
+    from local_conv_attention import rotate_image_2d
+
+    spec = make_disc_square_types()[0]
+    image = generate_disc_square_image(spec, image_size=32)
+    torch.testing.assert_close(rotate_image_2d(image, 0.0), image)
+
+
+def test_disc_square_dataset_rotation_deterministic_with_generator() -> None:
+    g = torch.Generator()
+    g.manual_seed(12345)
+    ds = DiscSquareDataset(repeats_per_type=1, random_rotation=True, generator=g)
+    a = ds[0]["rotation_deg"]
+    g.manual_seed(12345)
+    ds2 = DiscSquareDataset(repeats_per_type=1, random_rotation=True, generator=g)
+    b = ds2[0]["rotation_deg"]
+    assert a == b
+    assert 0.0 <= a < 360.0

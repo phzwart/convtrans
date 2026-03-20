@@ -70,6 +70,48 @@ def test_optimized_matches_shift_and_unfold_references(
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("seed", [0, 1])
+@pytest.mark.parametrize("batch,num_heads,height,width,window_size,head_dim,dilation", OPERATOR_CASES)
+def test_optimized_matches_shift_and_unfold_with_reflect_padding(
+    device: str,
+    dtype: torch.dtype,
+    seed: int,
+    batch: int,
+    num_heads: int,
+    height: int,
+    width: int,
+    window_size: int,
+    head_dim: int,
+    dilation: int,
+) -> None:
+    torch.manual_seed(seed)
+    channels = num_heads * head_dim
+    q = torch.randn(batch, channels, height, width, device=device, dtype=dtype)
+    k = torch.randn(batch, channels, height, width, device=device, dtype=dtype)
+    v = torch.randn(batch, channels, height, width, device=device, dtype=dtype)
+
+    kwargs = dict(
+        num_heads=num_heads,
+        window_size=window_size,
+        dilation=dilation,
+        boundary_pad="reflect",
+    )
+    optimized = LocalAttention2d(**kwargs)
+    shift_ref = ShiftLocalAttention2d(**kwargs)
+    unfold_ref = ReferenceLocalAttention2d(**kwargs)
+
+    out_optimized, attn_optimized = optimized(q, k, v, return_attention=True)
+    out_shift, attn_shift = shift_ref(q, k, v, return_attention=True)
+    out_unfold, attn_unfold = unfold_ref(q, k, v, return_attention=True)
+
+    _assert_close(out_optimized, out_shift)
+    _assert_close(attn_optimized, attn_shift)
+    _assert_close(out_optimized, out_unfold)
+    _assert_close(attn_optimized, attn_unfold)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("seed", [0, 1, 2])
 @pytest.mark.parametrize("batch,num_heads,height,width,window_size,head_dim", FLAT_CASES)
 def test_fixed_shift_matches_flattened_masked_attention(

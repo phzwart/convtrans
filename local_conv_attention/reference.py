@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from .masks import flattened_local_attention_mask, local_validity_mask
+from .ops import BoundaryPadMode, pad_spatial_hw
 from .utils import merge_heads, reshape_heads, scaled_dot_product_scale, window_radius
 
 
@@ -21,11 +22,13 @@ class ReferenceLocalAttention2d(nn.Module):
         window_size: int,
         *,
         dilation: int = 1,
+        boundary_pad: BoundaryPadMode = "zeros",
     ) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.window_size = window_size
         self.dilation = dilation
+        self.boundary_pad: BoundaryPadMode = boundary_pad
         self.padding = window_radius(window_size, dilation=dilation)
 
     def forward(
@@ -44,18 +47,26 @@ class ReferenceLocalAttention2d(nn.Module):
         head_dim = q_heads.size(2)
         neighborhood = self.window_size * self.window_size
 
+        if self.boundary_pad == "zeros":
+            k_in, v_in = k, v
+            unfold_pad = self.padding
+        else:
+            k_in = pad_spatial_hw(k, self.padding, self.boundary_pad)
+            v_in = pad_spatial_hw(v, self.padding, self.boundary_pad)
+            unfold_pad = 0
+
         k_neighbors = F.unfold(
-            k,
+            k_in,
             kernel_size=self.window_size,
             dilation=self.dilation,
-            padding=self.padding,
+            padding=unfold_pad,
             stride=1,
         )
         v_neighbors = F.unfold(
-            v,
+            v_in,
             kernel_size=self.window_size,
             dilation=self.dilation,
-            padding=self.padding,
+            padding=unfold_pad,
             stride=1,
         )
 
@@ -64,13 +75,20 @@ class ReferenceLocalAttention2d(nn.Module):
         k_neighbors = k_neighbors.permute(0, 1, 3, 2, 4, 5)
         v_neighbors = v_neighbors.permute(0, 1, 3, 2, 4, 5)
 
-        valid_mask = local_validity_mask(
-            height,
-            width,
-            self.window_size,
-            dilation=self.dilation,
-            device=q.device,
-        ).view(1, 1, neighborhood, height, width)
+        if self.boundary_pad == "zeros":
+            valid_mask = local_validity_mask(
+                height,
+                width,
+                self.window_size,
+                dilation=self.dilation,
+                device=q.device,
+            ).view(1, 1, neighborhood, height, width)
+        else:
+            valid_mask = torch.ones(
+                (1, 1, neighborhood, height, width),
+                dtype=torch.bool,
+                device=q.device,
+            )
 
         scores = (q_heads.unsqueeze(2) * k_neighbors).sum(dim=3)
         scores = scores * scaled_dot_product_scale(head_dim)

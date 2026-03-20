@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from itertools import product
 from typing import Sequence
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import Dataset
 
@@ -104,6 +106,42 @@ def generate_disc_square_image(
     return image.unsqueeze(0)
 
 
+def rotate_image_2d(image_1hw: Tensor, degrees: float) -> Tensor:
+    """Rotate a single-channel map ``[1, H, W]`` by ``degrees`` counter-clockwise about the center.
+
+    Uses ``grid_sample`` (bilinear, zero padding outside the original square).  ``degrees`` may be
+    any float; common use is uniform random in ``[0, 360)``.
+    """
+    if image_1hw.dim() != 3:
+        raise ValueError(f"rotate_image_2d expects [1, H, W], got {tuple(image_1hw.shape)}.")
+    if image_1hw.size(0) != 1:
+        raise ValueError("rotate_image_2d currently supports a single channel (leading dim 1).")
+
+    _, height, width = image_1hw.shape
+    device = image_1hw.device
+    dtype = image_1hw.dtype
+    angle = math.radians(float(degrees))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+
+    yy = torch.linspace(-1.0, 1.0, height, device=device, dtype=dtype)
+    xx = torch.linspace(-1.0, 1.0, width, device=device, dtype=dtype)
+    ys, xs = torch.meshgrid(yy, xx, indexing="ij")
+    # Inverse warp: output pixel samples input at R(-θ) applied to normalized output coords.
+    x_src = xs * cos_a + ys * sin_a
+    y_src = -xs * sin_a + ys * cos_a
+    grid = torch.stack((x_src, y_src), dim=-1).unsqueeze(0)
+
+    out = F.grid_sample(
+        image_1hw.unsqueeze(0),
+        grid,
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=True,
+    )
+    return out.squeeze(0)
+
+
 class DiscSquareDataset(Dataset):
     """Dataset that repeats the 8 canonical disc/two-square types."""
 
@@ -114,11 +152,20 @@ class DiscSquareDataset(Dataset):
         image_size: int = 128,
         radii: Sequence[int] = (28, 40),
         square_sizes: Sequence[int] = (8, 14),
+        random_rotation: bool = True,
+        rotation_range_deg: tuple[float, float] = (0.0, 360.0),
+        generator: torch.Generator | None = None,
     ) -> None:
         super().__init__()
         if repeats_per_type <= 0:
             raise ValueError("repeats_per_type must be positive.")
+        low, high = rotation_range_deg
+        if high < low:
+            raise ValueError("rotation_range_deg must satisfy low <= high.")
         self.image_size = image_size
+        self.random_rotation = random_rotation
+        self.rotation_range_deg = (float(low), float(high))
+        self.generator = generator
         self.types = make_disc_square_types(radii=radii, square_sizes=square_sizes)
         self.samples = [spec for spec in self.types for _ in range(repeats_per_type)]
 
@@ -131,6 +178,15 @@ class DiscSquareDataset(Dataset):
             spec,
             image_size=self.image_size,
         )
+        rotation_deg = 0.0
+        if self.random_rotation:
+            lo, hi = self.rotation_range_deg
+            if self.generator is not None:
+                u = torch.rand((), generator=self.generator)
+            else:
+                u = torch.rand(())
+            rotation_deg = lo + (hi - lo) * float(u.item())
+            image = rotate_image_2d(image, rotation_deg)
         return {
             "image": image,
             "type_index": spec.type_index,
@@ -138,4 +194,5 @@ class DiscSquareDataset(Dataset):
             "near_density": spec.near_density,
             "far_density": spec.far_density,
             "square_size": spec.square_size,
+            "rotation_deg": rotation_deg,
         }

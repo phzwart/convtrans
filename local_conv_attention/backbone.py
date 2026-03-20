@@ -65,6 +65,7 @@ class HEABackbone(nn.Module):
                     window_size=config.bottleneck_window_size,
                     dilation=config.bottleneck_dilation,
                     implementation=config.attention.operator_backend,
+                    boundary_pad=config.attention.local_attention_boundary_pad,
                 )
                 for _ in range(config.bottleneck_depth)
             ]
@@ -93,6 +94,7 @@ class HEABackbone(nn.Module):
                     window_size=self.memory_scale_settings[scale]["window"],
                     dilation=self.memory_scale_settings[scale]["dilation"],
                     implementation=config.attention.operator_backend,
+                    boundary_pad=config.attention.local_attention_boundary_pad,
                     use_local_transformer_block=memory_cfg.use_local_transformer_block,
                     norm=config.norm,
                     act=config.act,
@@ -130,6 +132,7 @@ class HEABackbone(nn.Module):
                     window_sizes=[hea_window_by_scale[scale] for scale in source_scales],
                     dilations=[hea_dilation_by_scale[scale] for scale in source_scales],
                     implementation=config.attention.operator_backend,
+                    boundary_pad=config.attention.local_attention_boundary_pad,
                     fusion_mode=config.attention.fusion_mode,
                     residual_fusion=config.hea.fusion,
                     qkv_bias=config.attention.qkv_bias,
@@ -167,6 +170,7 @@ class HEABackbone(nn.Module):
                         window_sizes=[hea_window_by_scale[scale] for scale in source_scales],
                         dilations=[hea_dilation_by_scale[scale] for scale in source_scales],
                         implementation=config.attention.operator_backend,
+                        boundary_pad=config.attention.local_attention_boundary_pad,
                         fusion_mode=config.attention.fusion_mode,
                         residual_fusion=config.hea.fusion,
                         qkv_bias=config.attention.qkv_bias,
