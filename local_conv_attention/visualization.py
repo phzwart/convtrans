@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Mapping, Sequence
 
 import matplotlib.pyplot as plt
@@ -162,5 +163,120 @@ def visualize_signed_explanation(
     axes[2].set_title("Negative")
     axes[2].axis("off")
 
+    fig.tight_layout()
+    return fig
+
+
+def _slice_latent_map(
+    latents: Tensor | np.ndarray,
+    *,
+    batch_index: int,
+    view_index: int | None,
+) -> Tensor:
+    """Return ``[D, H, W]`` from ``[D,H,W]``, ``[B,D,H,W]``, or ``[B,V,D,H,W]``."""
+    if isinstance(latents, np.ndarray):
+        x = torch.from_numpy(np.asarray(latents, dtype=np.float32))
+    else:
+        x = latents.detach().cpu().float()
+    if x.dim() == 3:
+        return x
+    if x.dim() == 4:
+        if batch_index < 0 or batch_index >= x.size(0):
+            raise IndexError(f"batch_index {batch_index} out of range for size {x.size(0)}.")
+        return x[batch_index]
+    if x.dim() == 5:
+        if batch_index < 0 or batch_index >= x.size(0):
+            raise IndexError(f"batch_index {batch_index} out of range for size {x.size(0)}.")
+        v = 0 if view_index is None else view_index
+        if v < 0 or v >= x.size(1):
+            raise IndexError(f"view_index {v} out of range for {x.size(1)} views.")
+        return x[batch_index, v]
+    raise ValueError(
+        "latents must be [D,H,W], [B,D,H,W], or [B,V,D,H,W]; "
+        f"got dim={x.dim()} shape={tuple(x.shape)}."
+    )
+
+
+def plot_latent_channels(
+    latents: Tensor | np.ndarray,
+    *,
+    batch_index: int = 0,
+    view_index: int | None = None,
+    max_cols: int = 8,
+    cmap: str = "magma",
+    per_channel_norm: bool = True,
+    global_norm: bool = False,
+    figsize_per_axis: float = 1.35,
+    suptitle: str | None = None,
+) -> Figure:
+    """Plot every latent channel as its own heatmap (dense LeJEPA / projector output).
+
+    Args:
+        latents: Tensor or array, one of:
+
+            - ``[D, H, W]``
+            - ``[B, D, H, W]`` (uses ``batch_index``)
+            - ``[B, V, D, H, W]`` (uses ``batch_index`` and ``view_index``, default view 0)
+
+        batch_index: Which batch element when ``B`` is present.
+        view_index: Which view when ``V`` is present; default ``0`` if ``view_index`` is None.
+        max_cols: Grid columns before wrapping to the next row.
+        cmap: Matplotlib colormap name.
+        per_channel_norm: If True (and not ``global_norm``), scale each channel to
+            ``[0, 1]`` by its own min/max so weak channels stay visible.
+        global_norm: If True, use one min/max over all channels (overrides ``per_channel_norm``).
+        figsize_per_axis: Approximate inch size per subplot cell.
+        suptitle: Optional figure title.
+
+    Returns:
+        A :class:`matplotlib.figure.Figure` with ``D`` subplots. Call ``plt.show()`` or save as needed.
+    """
+    z = _slice_latent_map(latents, batch_index=batch_index, view_index=view_index)
+    if z.dim() != 3:
+        raise ValueError(f"Internal slice must be [D,H,W], got {tuple(z.shape)}.")
+    depth, height, width = int(z.size(0)), int(z.size(1)), int(z.size(2))
+    if depth == 0:
+        raise ValueError("latent depth D must be positive.")
+
+    ncols = min(max_cols, depth)
+    nrows = int(math.ceil(depth / ncols))
+    fig_w = figsize_per_axis * ncols
+    fig_h = figsize_per_axis * nrows
+    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_w, fig_h), squeeze=False)
+
+    arr = z.numpy()
+    if global_norm:
+        lo, hi = float(arr.min()), float(arr.max())
+        if hi <= lo:
+            lo, hi = lo, lo + 1.0
+    else:
+        lo = hi = None
+
+    for d in range(depth):
+        r, c = divmod(d, ncols)
+        ax = axes[r][c]
+        ch = arr[d]
+        if global_norm:
+            norm = (ch - lo) / (hi - lo)
+            norm = np.clip(norm, 0.0, 1.0)
+            ax.imshow(norm, cmap=cmap, vmin=0.0, vmax=1.0)
+        elif per_channel_norm:
+            cmin, cmax = float(ch.min()), float(ch.max())
+            if cmax <= cmin:
+                ax.imshow(np.zeros_like(ch), cmap=cmap, vmin=0.0, vmax=1.0)
+            else:
+                ax.imshow((ch - cmin) / (cmax - cmin), cmap=cmap, vmin=0.0, vmax=1.0)
+        else:
+            ax.imshow(ch, cmap=cmap)
+        ax.set_title(f"d={d}")
+        ax.axis("off")
+
+    for d in range(depth, nrows * ncols):
+        r, c = divmod(d, ncols)
+        axes[r][c].axis("off")
+        axes[r][c].set_visible(False)
+
+    if suptitle is not None:
+        fig.suptitle(suptitle)
     fig.tight_layout()
     return fig

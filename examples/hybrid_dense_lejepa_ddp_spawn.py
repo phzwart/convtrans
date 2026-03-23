@@ -62,9 +62,8 @@ def _worker(
         sys.path.insert(0, str(root))
 
     from local_conv_attention import DiscSquareDataset, HybridDenseLeJEPAModel
-    from local_conv_attention.config import (
-        HEAExperimentConfig,
-        HEAUNetModelConfig,
+    from local_conv_attention.config import HEAExperimentConfig, HEAUNetModelConfig
+    from local_conv_attention.hybrid_encoder import (
         HybridAttentionBlockConfig,
         HybridConvAttentionEncoderConfig,
         ResidualStemConfig,

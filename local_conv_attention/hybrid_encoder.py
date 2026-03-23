@@ -8,6 +8,7 @@ from typing import Literal
 from torch import Tensor, nn
 
 from .attention import AttentionImplementation, BoundaryPadMode, LocalSelfAttention2d
+from .utils import ChannelLayerNorm2d
 
 
 OutputMode = Literal["feature_map", "pooled", "logits"]
@@ -51,6 +52,11 @@ class HybridAttentionBlockConfig:
     out_bias: bool = True
     mlp_bias: bool = True
     hidden_channels: int = 256
+    #: If True, apply channel LayerNorm before attention and before the MLP (same idea as
+    #: :class:`~local_conv_attention.block.LocalTransformerBlock2d`). Recommended for
+    #: stable features; if False, uses the legacy path (attention → MLP, no norm).
+    use_pre_norm: bool = True
+    norm_eps: float = 1e-5
 
     def validate(self) -> None:
         if self.channels <= 0:
@@ -67,6 +73,8 @@ class HybridAttentionBlockConfig:
             raise ValueError("block.dilation must be positive.")
         if self.hidden_channels <= 0:
             raise ValueError("block.hidden_channels must be positive.")
+        if self.norm_eps <= 0:
+            raise ValueError("block.norm_eps must be positive.")
 
 
 @dataclass(frozen=True)
@@ -78,6 +86,10 @@ class HybridConvAttentionEncoderConfig:
     depth: int = 4
     output_mode: OutputMode = "feature_map"
     num_classes: int | None = None
+    #: If True, apply global average pooling after the block stack so activations are
+    #: spatially flat ``[B, C, 1, 1]`` (one vector per channel per image). If False,
+    #: keep full-resolution maps ``[B, C, H, W]``.
+    global_avg_pool_features: bool = False
 
     def validate(self) -> None:
         self.stem.validate()
@@ -137,10 +149,22 @@ class ResidualStem2d(nn.Module):
 
 
 class HybridAttentionBlock2d(nn.Module):
-    """One block: local self-attention + linear+gelu + linear+gelu with residual."""
+    """One block: local self-attention + linear+gelu + linear+gelu with residual.
+
+    With ``use_pre_norm=True`` (default), uses pre-norm like
+    :class:`~local_conv_attention.block.LocalTransformerBlock2d` for healthier gradients
+    and less tendency toward degenerate (spatially constant) activations during training.
+    """
 
     def __init__(self, config: HybridAttentionBlockConfig) -> None:
         super().__init__()
+        self.use_pre_norm = config.use_pre_norm
+        if self.use_pre_norm:
+            self.norm1 = ChannelLayerNorm2d(config.channels, eps=config.norm_eps)
+            self.norm2 = ChannelLayerNorm2d(config.channels, eps=config.norm_eps)
+        else:
+            self.norm1 = None  # type: ignore[assignment]
+            self.norm2 = None  # type: ignore[assignment]
         self.attn = LocalSelfAttention2d(
             dim=config.channels,
             num_heads=config.num_heads,
@@ -154,11 +178,19 @@ class HybridAttentionBlock2d(nn.Module):
         self.linear1 = _LinearGELU2d(config.channels, config.hidden_channels, bias=config.mlp_bias)
         self.linear2 = _LinearGELU2d(config.hidden_channels, config.channels, bias=config.mlp_bias)
 
+    def _mlp(self, x: Tensor) -> Tensor:
+        x = self.linear1(x)
+        return self.linear2(x)
+
     def forward(self, x: Tensor) -> Tensor:
+        if self.use_pre_norm:
+            assert self.norm1 is not None and self.norm2 is not None
+            x = x + self.attn(self.norm1(x))
+            x = x + self._mlp(self.norm2(x))
+            return x
         residual = x
         x = self.attn(x)
-        x = self.linear1(x)
-        x = self.linear2(x)
+        x = self._mlp(x)
         return x + residual
 
 
@@ -176,10 +208,14 @@ class HybridConvAttentionEncoder(nn.Module):
         else:
             self.head = nn.Identity()
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self._gap_after_blocks = bool(config.global_avg_pool_features)
 
     def forward_features(self, x: Tensor) -> Tensor:
         x = self.stem(x)
-        return self.blocks(x)
+        x = self.blocks(x)
+        if self._gap_after_blocks:
+            x = self.pool(x)
+        return x
 
     def forward(self, x: Tensor) -> Tensor:
         features = self.forward_features(x)

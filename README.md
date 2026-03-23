@@ -38,8 +38,9 @@ local_conv_attention/
   ops.py           # explicit and conv2d-backed fixed shift banks
   reference.py     # unfold and flattened masked-attention references
   sigreg.py        # SIGReg characteristic-function regularizer
+  simple_transformer_encoder.py  # N × LocalTransformerBlock2d + conv stem
   utils.py         # shape helpers, LayerNorm wrapper, MLP
-  visualization.py # HEA explanation heatmap and overlay helpers
+  visualization.py # HEA explanation heatmaps; ``plot_latent_channels`` for dense latents
   views.py         # aligned multi-view SSL generation
 tests/
 benchmarks/
@@ -224,6 +225,12 @@ model.eval()
 ```
 
 **Hybrid encoder (conv stem + local attention) + dense LeJEPA:** build `HEAUNetModelConfig` with `name="hybrid_dense_lejepa"`, a non-null `hybrid_encoder` (`HybridConvAttentionEncoderConfig`), and `latent.source="encoder_out"` (only supported hook). Use `HybridDenseLeJEPAModel` or `build_model(config)`. Multi-GPU spawn: `examples/hybrid_dense_lejepa_ddp_spawn.py` → artifacts under `examples/hybrid_dense_lejepa_ddp_outputs/`; load with `load_hybrid_dense_lejepa_from_checkpoint` in that module.
+
+**Local Mac / single device:** `examples/hybrid_dense_lejepa_mac.ipynb` — small model, CPU or MPS, no DDP.
+
+**Troubleshooting (flat latent heatmaps):** If `latent.normalize_latents=True`, the projector applies `F.normalize(..., dim=1)`, so **per-pixel L2 norm is 1 everywhere** — `lat.norm(dim=1)` plots look spatially uniform. Plot a channel (e.g. `lat[:, 0]`) or `lat.std(dim=1)` instead, or set `normalize_latents=False`. The hybrid encoder blocks use **pre-norm LayerNorm** by default (`HybridAttentionBlockConfig.use_pre_norm=True`) to match `LocalTransformerBlock2d` and improve training stability.
+
+**Invariance loss ≈ 0:** `dense_invariance_loss` is the mean squared deviation **across views** at each pixel (not spatial variance within a view). It is **zero iff every augmentation produces the same latent at every (b, d, h, w)**. That does *not* by itself mean the map is spatially constant—it means **perfect cross-view agreement**. If input views differ but this stays ~0, check for representation collapse (use `losses_ssl.dense_lejepa_inv_diagnostics(latents)` and compare `views[:,0]` vs `views[:,1]` pixel diffs).
 
 **Notebook:** `examples/inspect_dense_lejepa_checkpoint.ipynb` — browse `dense_lejepa_ddp_outputs/`, load a checkpoint on CPU, run inference on synthetic or custom grayscale images, plot per-hook latent norm maps, and run **linear pixel-decoder + edge-correlation probes** to relate latents to input intensity.
 

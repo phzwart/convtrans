@@ -41,7 +41,13 @@ def _in_channels_for_latent_source(channels: list[int], source: str) -> int:
 
 
 class DenseLatentProjector2d(nn.Module):
-    """Project dense HEA features into dense latent vectors."""
+    """Project dense HEA features into dense latent vectors.
+
+    If ``normalize_latents`` is True, each spatial location gets an L2-normalized vector
+    along the channel dimension, so **||z||₂ is 1 at every pixel**. Do not use
+    ``latents.norm(dim=1)`` as a spatial heatmap in that case — it will look uniformly flat.
+    Plot a single channel (e.g. ``latents[:, 0]``) or backbone features instead.
+    """
 
     def __init__(
         self,

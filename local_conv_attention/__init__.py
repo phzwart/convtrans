@@ -54,6 +54,7 @@ from .reference import (
     flattened_local_attention_from_qkv,
 )
 from .sigreg import SIGRegLoss
+from .simple_transformer_encoder import SimpleTransformerEncoder2d, SimpleTransformerEncoderConfig
 from .synthetic_data import (
     DiscSquareDataset,
     DiscSquareType,
@@ -74,6 +75,7 @@ from .unet import HEAUNet, HEAUNetInstanceModel
 from .visualization import (
     combine_upsampled_heatmaps,
     overlay_heatmap_on_image,
+    plot_latent_channels,
     upsample_region_heatmap,
     visualize_explanation,
     visualize_signed_explanation,
@@ -129,6 +131,8 @@ __all__ = [
     "ShiftLocalAttention2d",
     "ShiftBank2d",
     "SIGRegLoss",
+    "SimpleTransformerEncoder2d",
+    "SimpleTransformerEncoderConfig",
     "SwinUNet",
     "build_center_heatmap_target",
     "build_foreground_target",
@@ -154,6 +158,7 @@ __all__ = [
     "make_disc_square_types",
     "combine_upsampled_heatmaps",
     "overlay_heatmap_on_image",
+    "plot_latent_channels",
     "upsample_region_heatmap",
     "visualize_explanation",
     "visualize_signed_explanation",
